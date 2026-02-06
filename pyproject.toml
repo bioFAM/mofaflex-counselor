@@ -22,10 +22,11 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
+dynamic = [ "version" ]
 dependencies = [
-  "anndata",
-  # for debug logging (referenced from the issue template)
-  "session-info2",
+  "jupyter-ai-jupyternaut",
+  "jupyter-ai-persona-manager",
+  "langchain>=1",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://mofaflex-counselor.readthedocs.io/"
@@ -55,6 +56,9 @@ doc = [
   "sphinxcontrib-katex",
   "sphinxext-opengraph",
 ]
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/mofaflex_councelor/_version.py"
 
 [tool.hatch.envs.default]
 installer = "uv"
@@ -86,11 +90,15 @@ matrix.deps.env-vars = [
   { key = "UV_PRERELEASE", value = "allow", if = [ "pre" ] },
 ]
 
+[tool.hatch.version]
+source = "vcs"
+
 [tool.ruff]
 line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
 
+format.skip-magic-trailing-comma = true
 format.docstring-code-format = true
 
 lint.select = [
@@ -113,18 +121,19 @@ lint.ignore = [
   "D105", # __magic__ methods are often self-explanatory, allow missing docstrings
   "D107", # Missing docstring in __init__
   # Disable one in each pair of mutually incompatible rules
-  "D203", # We don’t want a blank line before a class docstring
-  "D213", # <> We want docstrings to start immediately after the opening triple quote
-  "D400", # first line should end with a period [Bug: doesn’t work with single-line docstrings]
-  "D401", # First line should be in imperative mood; try rephrasing
-  "E501", # line too long -> we accept long comment lines; formatter gets rid of long code lines
-  "E731", # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
-  "E741", # allow I, O, l as variable names -> I is the identity matrix
+  "D203",   # We don’t want a blank line before a class docstring
+  "D213",   # <> We want docstrings to start immediately after the opening triple quote
+  "D400",   # first line should end with a period [Bug: doesn’t work with single-line docstrings]
+  "D401",   # First line should be in imperative mood; try rephrasing
+  "E501",   # line too long -> we accept long comment lines; formatter gets rid of long code lines
+  "E731",   # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
+  "E741",   # allow I, O, l as variable names -> I is the identity matrix
+  "TID252", # allow relative imports
 ]
 lint.per-file-ignores."*/__init__.py" = [ "F401" ]
 lint.per-file-ignores."docs/*" = [ "I" ]
 lint.per-file-ignores."tests/*" = [ "D" ]
-lint.pydocstyle.convention = "numpy"
+lint.pydocstyle.convention = "google"
 
 [tool.pytest]
 strict = true
