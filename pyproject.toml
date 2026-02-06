@@ -1,10 +1,9 @@
 [build-system]
 build-backend = "hatchling.build"
-requires = [ "hatchling" ]
+requires = [ "hatch-vcs", "hatchling" ]
 
 [project]
 name = "mofaflex-counselor"
-version = "0.0.1"
 description = "JupyterAI persona to help you configure MOFA-FLEX"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -26,12 +25,17 @@ dynamic = [ "version" ]
 dependencies = [
   "jupyter-ai-jupyternaut",
   "jupyter-ai-persona-manager",
+  "jupyter-core",
   "langchain>=1",
+  "langchain-litellm",
+  "langgraph-checkpoint-sqlite>=3",
+  "pydantic",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://mofaflex-counselor.readthedocs.io/"
 urls.Homepage = "https://github.com/biofam/mofaflex-counselor"
 urls.Source = "https://github.com/biofam/mofaflex-counselor"
+entry-points."jupyter_ai.personas".mofaflex_counselor = "mofaflex_counselor.counselor:MofaFlexCounselor"
 
 [dependency-groups]
 dev = [
@@ -58,7 +62,7 @@ doc = [
 ]
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/mofaflex_councelor/_version.py"
+version-file = "src/mofaflex_counselor/_version.py"
 
 [tool.hatch.envs.default]
 installer = "uv"
@@ -117,6 +121,8 @@ lint.select = [
 lint.ignore = [
   "B008", # Errors from function calls in argument defaults. These are fine when the result is immutable.
   "D100", # Missing docstring in public module
+  "D101", # allow undocumented public classes
+  "D102", # allow undocumented public methods
   "D104", # Missing docstring in public package
   "D105", # __magic__ methods are often self-explanatory, allow missing docstrings
   "D107", # Missing docstring in __init__

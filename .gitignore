@@ -11,7 +11,7 @@ buck-out/
 .venv/
 __pycache__/
 .*cache/
-/src/mofaflex_councelor/_version.py
+/src/mofaflex_counselor/_version.py
 
 # Distribution / packaging
 /dist/
