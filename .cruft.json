@@ -1,0 +1,43 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "8642a1825348e6236ec62151c55dd90c7197ae08",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "mofaflex-counselor",
+      "package_name": "mofaflex_counselor",
+      "project_description": "JupyterAI persona to help you configure MOFA-FLEX",
+      "author_full_name": "Ilia Kats",
+      "author_email": "i.kats@dkfz-heidelberg.de",
+      "github_user": "biofam",
+      "github_repo": "mofaflex-counselor",
+      "license": "GNU General Public License Version 3",
+      "ide_integration": false,
+      "_copy_without_render": [
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
+        "docs/_templates/autosummary/**.rst"
+      ],
+      "_exclude_on_template_update": [
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+        "docs/api.md",
+        "docs/index.md",
+        "docs/notebooks/example.ipynb",
+        "docs/references.bib",
+        "docs/references.md",
+        "src/**",
+        "tests/**"
+      ],
+      "_render_devdocs": false,
+      "_jinja2_env_vars": {
+        "lstrip_blocks": true,
+        "trim_blocks": true
+      },
+      "_template": "https://github.com/scverse/cookiecutter-scverse",
+      "_commit": "8642a1825348e6236ec62151c55dd90c7197ae08"
+    }
+  },
+  "directory": null
+}
