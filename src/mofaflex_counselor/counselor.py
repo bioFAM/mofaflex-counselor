@@ -1,6 +1,7 @@
 import os
 from collections.abc import Sequence
 from importlib import resources
+from pathlib import Path
 from typing import Annotated, Literal
 
 import aiosqlite
@@ -15,7 +16,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field, PositiveInt
 
 MEMORY_STORE_PATH = os.path.join(jupyter_data_dir(), "jupyter_ai", "memory.sqlite")
-SYSTEM_PROMPT = resources.files(__package__).joinpath("prompts/chat_system_prompt.txt").read_text()
+AVATAR_PATH = str((Path(__file__).parent / "logo.svg").absolute())
+SYSTEM_PROMPT = (resources.files(__package__) / "prompts/chat_system_prompt.txt").read_text()
 
 
 class FinalizeConfigurationSchema(BaseModel):
@@ -76,7 +78,7 @@ class MofaFlexCounselor(BasePersona):
         return PersonaDefaults(
             name="MOFA-FLEX counselor",
             description="An agent to help you configure MOFA-FLEX.",
-            avatar_path="",
+            avatar_path=AVATAR_PATH,
             system_prompt="...",
         )
 
