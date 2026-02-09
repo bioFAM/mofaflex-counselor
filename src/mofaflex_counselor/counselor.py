@@ -113,7 +113,9 @@ class MofaFlexCounselor(BasePersona):
         self._model = ChatLiteLLM(**model_args, model=model_id, streaming=True)
         memory_store = await self.get_memory_store()
 
-        return create_agent(self._model, system_prompt=system_prompt, checkpointer=memory_store, tools=tools)
+        return create_agent(
+            self._model, system_prompt=system_prompt, checkpointer=memory_store, tools=tools, name="user_facing"
+        )
 
     async def process_message(self, message: Message) -> None:
         if not JupyternautPersona.config_manager.chat_model:
@@ -140,11 +142,12 @@ class MofaFlexCounselor(BasePersona):
             ):
                 if stream_mode == "messages":
                     token, metadata = data
-                    node = metadata["langgraph_node"]
-                    content_blocks = token.content_blocks
-                    if node == "model" and content_blocks:
-                        if token.text:
-                            yield token.text
+                    if metadata.get("lc_agent_name") == "user_facing":
+                        node = metadata["langgraph_node"]
+                        content_blocks = token.content_blocks
+                        if node == "model" and content_blocks:
+                            if token.text:
+                                yield token.text
                 elif stream_mode == "custom":
                     yield data
 
@@ -196,8 +199,13 @@ class MofaFlexCounselor(BasePersona):
 
         debaters_checkpointer = InMemorySaver()
         debaters = [
-            create_agent(self._model, system_prompt=debater_system_prompt, checkpointer=debaters_checkpointer)
-            for _ in range(ndebaters)
+            create_agent(
+                self._model,
+                system_prompt=debater_system_prompt,
+                checkpointer=debaters_checkpointer,
+                name=f"debater_{i}",
+            )
+            for i in range(ndebaters)
         ]
         moderator = create_agent(
             self._model,
@@ -205,10 +213,13 @@ class MofaFlexCounselor(BasePersona):
             tools=[self.finalize_configuration_after_debate],
             state_schema=ModeratorAgentState,
             middleware=[self.force_finalize],
+            name="moderator",
         )
 
         if DEBUG:
             runtime.stream_writer("Thinking...\nround 0")
+        else:
+            runtime.stream_writer("Thinking...")
         debater_responses = await asyncio.gather(
             *(
                 debater.ainvoke(
@@ -238,6 +249,8 @@ class MofaFlexCounselor(BasePersona):
 
             if DEBUG:
                 runtime.stream_writer(f"Thinking...\nround {round + 1}")
+            else:
+                runtime.stream_writer("Thinking...")
             debater_responses = await asyncio.gather(
                 *(
                     debater.ainvoke(
