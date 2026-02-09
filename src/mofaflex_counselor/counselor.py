@@ -1,6 +1,6 @@
 import asyncio
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib import resources
 from io import StringIO
 from pathlib import Path
@@ -12,6 +12,7 @@ from jupyter_ai_persona_manager import BasePersona, PersonaDefaults
 from jupyter_core.paths import jupyter_data_dir
 from jupyterlab_chat.models import Message
 from langchain.agents import AgentState, create_agent
+from langchain.agents.middleware import ModelRequest, ModelResponse, wrap_model_call
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
 from langchain_litellm import ChatLiteLLM
@@ -26,6 +27,9 @@ SYSTEM_PROMPT = (resources.files(__package__) / "prompts/chat_system_prompt.txt"
 DEBATER_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/debater_system_prompt.txt").read_text()
 MODERATOR_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/moderator_system_prompt.txt").read_text()
 MODERATOR_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/moderator_msg_prompt.txt").read_text()
+JUDGE_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/judge_msg_prompt.txt").read_text()
+
+DEBUG = os.environ.get("MOFAFLEX_DEBUG")
 
 
 class MofaFlexParameters(BaseModel):
@@ -86,6 +90,7 @@ class FinalizeConfigurationSchema(BaseModel):
 
 class ModeratorAgentState(AgentState):
     finished: bool
+    judging: bool
 
 
 class MofaFlexCounselor(BasePersona):
@@ -127,20 +132,45 @@ class MofaFlexCounselor(BasePersona):
         context = {"thread_id": self.ychat.get_id(), "username": message.sender}
 
         async def create_aiter():
-            async for token, metadata in agent.astream(
+            async for stream_mode, data in agent.astream(
                 {"messages": [{"role": "user", "content": message.body}]},
                 {"configurable": context},
                 context={"self": self},
-                stream_mode="messages",
+                stream_mode=["messages", "custom"],
             ):
-                node = metadata["langgraph_node"]
-                content_blocks = token.content_blocks
-                if node == "model" and content_blocks:
-                    if token.text:
-                        yield token.text
+                if stream_mode == "messages":
+                    token, metadata = data
+                    node = metadata["langgraph_node"]
+                    content_blocks = token.content_blocks
+                    if node == "model" and content_blocks:
+                        if token.text:
+                            yield token.text
+                elif stream_mode == "custom":
+                    yield data
 
         response_aiter = create_aiter()
         await self.stream_message(response_aiter)
+
+    @staticmethod
+    async def moderator(runtime, debaters, moderator, debater_responses, round):
+        debater_msgs = [
+            f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
+            for i, response in enumerate(debater_responses)
+        ]
+        moderator_msg = MODERATOR_MESSAGE_PROMPT.format(round=round + 1, debater_responses="".join(debater_msgs))
+        if DEBUG:
+            runtime.stream_writer(moderator_msg)
+        moderator_response = await moderator.ainvoke(
+            {"messages": [HumanMessage(moderator_msg)], "finished": False, "judging": False}
+        )
+
+        return moderator_response, debater_msgs
+
+    @wrap_model_call
+    async def force_finalize(request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]):
+        if request.state["judging"]:
+            request = request.override(tool_choice="finalize_configuration")
+        return await handler(request)
 
     @tool(args_schema=FinalizeConfigurationSchema)
     async def finalize_configuration(runtime: ToolRuntime, parameters: MofaFlexParameters):
@@ -148,7 +178,8 @@ class MofaFlexCounselor(BasePersona):
         ndebaters = 2
         nrounds = 3
         self = runtime.context["self"]
-        self.send_message(parameters.model_dump_json())
+        if DEBUG:
+            runtime.stream_writer(parameters.model_dump_json())
 
         transcript = StringIO()
         for message in runtime.state["messages"]:
@@ -173,9 +204,11 @@ class MofaFlexCounselor(BasePersona):
             system_prompt=moderator_system_prompt,
             tools=[self.finalize_configuration_after_debate],
             state_schema=ModeratorAgentState,
+            middleware=[self.force_finalize],
         )
 
-        self.send_message("Thinking...\nround 0")
+        if DEBUG:
+            runtime.stream_writer("Thinking...\nround 0")
         debater_responses = await asyncio.gather(
             *(
                 debater.ainvoke(
@@ -192,21 +225,19 @@ class MofaFlexCounselor(BasePersona):
             )
         )
         for round in range(nrounds - 1):
-            debater_msgs = [
-                f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
-                for i, response in enumerate(debater_responses)
-            ]
-            moderator_msg = MODERATOR_MESSAGE_PROMPT.format(round=round + 1, debater_responses="".join(debater_msgs))
-            self.send_message(moderator_msg)
-            moderator_response = await moderator.ainvoke({"messages": [HumanMessage(moderator_msg)], "finished": False})
-            self.send_message(moderator_response["messages"][-1].text)
+            moderator_response, debater_msgs = await self.moderator(
+                runtime, debaters, moderator, debater_responses, round
+            )
+            if DEBUG:
+                runtime.stream_writer(moderator_response["messages"][-1].text)
 
             if moderator_response["finished"]:
                 for msg in reversed(moderator_response["messages"]):
                     if isinstance(msg, ToolMessage):
                         return msg.text
 
-            self.send_message(f"Thinking...\nround {round + 1}")
+            if DEBUG:
+                runtime.stream_writer(f"Thinking...\nround {round + 1}")
             debater_responses = await asyncio.gather(
                 *(
                     debater.ainvoke(
@@ -221,11 +252,26 @@ class MofaFlexCounselor(BasePersona):
                 )
             )
 
+        moderator_response, debater_msgs = await self.moderator(runtime, debaters, moderator, debater_responses)
+        if DEBUG:
+            runtime.stream_writer(moderator_response["messages"][-1].text)
+
+        if not moderator_response["finished"]:
+            judge_msg = JUDGE_MESSAGE_PROMPT.format(debater_responses="".join(debater_msgs))
+            moderator_response = await moderator.ainvoke(
+                {"messages": [HumanMessage(judge_msg)], "finished": False, "judging": True}
+            )
+        if not moderator_response["finished"]:
+            self.send_message("Something went horribly wrong.")
+        for msg in reversed(moderator_response["messages"]):
+            if isinstance(msg, ToolMessage):
+                return msg.text
+
     @tool("finalize_configuration", args_schema=FinalizeConfigurationSchema)
     async def finalize_configuration_after_debate(runtime: ToolRuntime, parameters: MofaFlexParameters):
         """Finalize the MOFA-FLEX configuration and generate runnable code. Only call this tool once you have arrived at a final answer."""
-        self = runtime.context["self"]
-        self.send_message(parameters.model_dump_json())
+        if DEBUG:
+            runtime.stream_writer(parameters.model_dump_json())
         return Command(
             update={
                 "finished": True,
