@@ -1,6 +1,8 @@
+import asyncio
 import os
 from collections.abc import Sequence
 from importlib import resources
+from io import StringIO
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -9,18 +11,24 @@ from jupyter_ai_jupyternaut.jupyternaut.jupyternaut import JupyternautPersona
 from jupyter_ai_persona_manager import BasePersona, PersonaDefaults
 from jupyter_core.paths import jupyter_data_dir
 from jupyterlab_chat.models import Message
-from langchain.agents import create_agent
+from langchain.agents import AgentState, create_agent
+from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
 from langchain_litellm import ChatLiteLLM
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.types import Command
 from pydantic import BaseModel, Field, PositiveInt
 
 MEMORY_STORE_PATH = os.path.join(jupyter_data_dir(), "jupyter_ai", "memory.sqlite")
 AVATAR_PATH = str((Path(__file__).parent / "logo.svg").absolute())
 SYSTEM_PROMPT = (resources.files(__package__) / "prompts/chat_system_prompt.txt").read_text()
+DEBATER_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/debater_system_prompt.txt").read_text()
+MODERATOR_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/moderator_system_prompt.txt").read_text()
+MODERATOR_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/moderator_msg_prompt.txt").read_text()
 
 
-class FinalizeConfigurationSchema(BaseModel):
+class MofaFlexParameters(BaseModel):
     n_factors: Annotated[
         PositiveInt,
         Field(
@@ -72,6 +80,14 @@ class FinalizeConfigurationSchema(BaseModel):
     ]
 
 
+class FinalizeConfigurationSchema(BaseModel):
+    parameters: MofaFlexParameters
+
+
+class ModeratorAgentState(AgentState):
+    finished: bool
+
+
 class MofaFlexCounselor(BasePersona):
     @property
     def defaults(self):
@@ -89,10 +105,10 @@ class MofaFlexCounselor(BasePersona):
         return self._memory_store
 
     async def get_agent(self, model_id: str, model_args, system_prompt: str, tools: list | None = None):
-        model = ChatLiteLLM(**model_args, model=model_id, streaming=True)
+        self._model = ChatLiteLLM(**model_args, model=model_id, streaming=True)
         memory_store = await self.get_memory_store()
 
-        return create_agent(model, system_prompt=system_prompt, checkpointer=memory_store, tools=tools)
+        return create_agent(self._model, system_prompt=system_prompt, checkpointer=memory_store, tools=tools)
 
     async def process_message(self, message: Message) -> None:
         if not JupyternautPersona.config_manager.chat_model:
@@ -114,7 +130,7 @@ class MofaFlexCounselor(BasePersona):
             async for token, metadata in agent.astream(
                 {"messages": [{"role": "user", "content": message.body}]},
                 {"configurable": context},
-                context={"model_id": model_id, "model_args": model_args, "self": self},
+                context={"self": self},
                 stream_mode="messages",
             ):
                 node = metadata["langgraph_node"]
@@ -127,24 +143,92 @@ class MofaFlexCounselor(BasePersona):
         await self.stream_message(response_aiter)
 
     @tool(args_schema=FinalizeConfigurationSchema)
-    async def finalize_configuration(
-        runtime: ToolRuntime,
-        n_factors: int,
-        layer: str | None,
-        group_by: str | Sequence[str] | None,
-        factor_prior: str,
-        weight_prior: str,
-        nonnegative_factors: bool,
-        nonnegative_weights: bool,
-    ):
+    async def finalize_configuration(runtime: ToolRuntime, parameters: MofaFlexParameters):
         """Finalize the MOFA-FLEX configuration and generate runnable code. Only call this tool once you have collected all relevant information from the user."""
-        runtime.context["self"].send_message(
-            "finalize_configuration called\n\n"
-            f"n_factors: {n_factors}\n\n"
-            f"layer: {layer}\n\n"
-            f"group_by: {group_by}\n\n"
-            f"factor_prior: {factor_prior}\n\n"
-            f"weight_prior: {weight_prior}\n\n"
-            f"nonnegative_factors: {nonnegative_factors}\n\n"
-            f"nonnegative_weights: {nonnegative_weights}"
+        ndebaters = 2
+        nrounds = 3
+        self = runtime.context["self"]
+        self.send_message(parameters.model_dump_json())
+
+        transcript = StringIO()
+        for message in runtime.state["messages"]:
+            if isinstance(message, HumanMessage):
+                transcript.writelines(("USER\n", "----\n", message.text, "\n"))
+            elif isinstance(message, AIMessage) and message.text:
+                transcript.writelines(("ASSISTANT\n", "---------\n", message.text, "\n"))
+        debater_system_prompt = DEBATER_SYSTEM_PROMPT.format(
+            parameters=MofaFlexParameters.model_json_schema(), transcript=transcript.getvalue()
+        )
+        moderator_system_prompt = MODERATOR_SYSTEM_PROMPT.format(
+            selected_params=parameters.model_dump_json(exclude_unset=True)
+        )
+
+        debaters_checkpointer = InMemorySaver()
+        debaters = [
+            create_agent(self._model, system_prompt=debater_system_prompt, checkpointer=debaters_checkpointer)
+            for _ in range(ndebaters)
+        ]
+        moderator = create_agent(
+            self._model,
+            system_prompt=moderator_system_prompt,
+            tools=[self.finalize_configuration_after_debate],
+            state_schema=ModeratorAgentState,
+        )
+
+        self.send_message("Thinking...\nround 0")
+        debater_responses = await asyncio.gather(
+            *(
+                debater.ainvoke(
+                    {
+                        "messages": [
+                            HumanMessage(
+                                f"These parameters were selected:\n{parameters.model_dump_json(exclude_unset=True)}"
+                            )
+                        ]
+                    },
+                    {"configurable": {"thread_id": i}},
+                )
+                for i, debater in enumerate(debaters)
+            )
+        )
+        for round in range(nrounds - 1):
+            debater_msgs = [
+                f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
+                for i, response in enumerate(debater_responses)
+            ]
+            moderator_msg = MODERATOR_MESSAGE_PROMPT.format(round=round + 1, debater_responses="".join(debater_msgs))
+            self.send_message(moderator_msg)
+            moderator_response = await moderator.ainvoke({"messages": [HumanMessage(moderator_msg)], "finished": False})
+            self.send_message(moderator_response["messages"][-1].text)
+
+            if moderator_response["finished"]:
+                for msg in reversed(moderator_response["messages"]):
+                    if isinstance(msg, ToolMessage):
+                        return msg.text
+
+            self.send_message(f"Thinking...\nround {round + 1}")
+            debater_responses = await asyncio.gather(
+                *(
+                    debater.ainvoke(
+                        {
+                            "messages": [
+                                HumanMessage(debater_msg) for j, debater_msg in enumerate(debater_msgs) if i != j
+                            ]
+                        },
+                        {"configurable": {"thread_id": i}},
+                    )
+                    for i, debater in enumerate(debaters)
+                )
+            )
+
+    @tool("finalize_configuration", args_schema=FinalizeConfigurationSchema)
+    async def finalize_configuration_after_debate(runtime: ToolRuntime, parameters: MofaFlexParameters):
+        """Finalize the MOFA-FLEX configuration and generate runnable code. Only call this tool once you have arrived at a final answer."""
+        self = runtime.context["self"]
+        self.send_message(parameters.model_dump_json())
+        return Command(
+            update={
+                "finished": True,
+                "messages": [ToolMessage(parameters.model_dump_json(), tool_call_id=runtime.tool_call_id)],
+            }
         )

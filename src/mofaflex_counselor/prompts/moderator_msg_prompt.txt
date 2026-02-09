@@ -1,0 +1,5 @@
+Round {round} of the debate has ended.
+
+{debater_responses}
+
+You, as the moderator, will evaluate both sides' answers and determine if there is a clear preference for an answer candidate. If so, call the finalize_configuration tool with the final MOFA-FLEX parameters. Otherwise, the debate will continue to the next round.
