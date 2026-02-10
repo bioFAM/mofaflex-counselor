@@ -307,3 +307,8 @@ model = mfl.MOFAFLEX(data,
                     )
 ```"""
         return Command(update={"finished": True, "messages": [ToolMessage(code, tool_call_id=runtime.tool_call_id)]})
+
+    def shutdown(self):
+        if hasattr(self, "_memory_store"):
+            self.parent.event_loop.create_task(self._memory_store.conn.close())
+        super().shutdown()
