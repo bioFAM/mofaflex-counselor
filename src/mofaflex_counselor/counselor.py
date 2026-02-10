@@ -177,7 +177,12 @@ class MofaFlexCounselor(BasePersona):
 
     @tool(args_schema=FinalizeConfigurationSchema)
     async def finalize_configuration(runtime: ToolRuntime, parameters: MofaFlexParameters):
-        """Finalize the MOFA-FLEX configuration and generate runnable code. Only call this tool once you have collected all relevant information from the user."""
+        """Finalize the MOFA-FLEX configuration and generate runnable Python code.
+
+        Only call this tool once you have collected all relevant information from the user.
+        Provide the Python code to the user in a markdown code block.
+        Do not edit or change the output of the tool in any way.
+        """
         ndebaters = 2
         nrounds = 3
         self = runtime.context["self"]
@@ -217,9 +222,9 @@ class MofaFlexCounselor(BasePersona):
         )
 
         if DEBUG:
-            runtime.stream_writer("Thinking...\nround 0")
+            runtime.stream_writer("Thinking...\n\nround 0\n\n")
         else:
-            runtime.stream_writer("Thinking...")
+            runtime.stream_writer("Thinking...\n\n")
         debater_responses = await asyncio.gather(
             *(
                 debater.ainvoke(
@@ -248,9 +253,9 @@ class MofaFlexCounselor(BasePersona):
                         return msg.text
 
             if DEBUG:
-                runtime.stream_writer(f"Thinking...\nround {round + 1}")
+                runtime.stream_writer(f"Thinking...\n\nround {round + 1}\n\n")
             else:
-                runtime.stream_writer("Thinking...")
+                runtime.stream_writer("Thinking...\n\n")
             debater_responses = await asyncio.gather(
                 *(
                     debater.ainvoke(
@@ -282,12 +287,23 @@ class MofaFlexCounselor(BasePersona):
 
     @tool("finalize_configuration", args_schema=FinalizeConfigurationSchema)
     async def finalize_configuration_after_debate(runtime: ToolRuntime, parameters: MofaFlexParameters):
-        """Finalize the MOFA-FLEX configuration and generate runnable code. Only call this tool once you have arrived at a final answer."""
+        """Finalize the MOFA-FLEX configuration and generate runnable Python code.
+
+        Only call this tool once you have arrived at a final answer.
+        """
         if DEBUG:
             runtime.stream_writer(parameters.model_dump_json())
-        return Command(
-            update={
-                "finished": True,
-                "messages": [ToolMessage(parameters.model_dump_json(), tool_call_id=runtime.tool_call_id)],
-            }
-        )
+        code = f"""```python
+model = mfl.MOFAFLEX(data,
+                     mfl.ModelOptions(n_factors={parameters.n_factors},
+                                      factor_prior={parameters.factor_prior!r},
+                                      weight_prior={parameters.weight_prior!r},
+                                      nonnegative_factors={parameters.nonnegative_factors},
+                                      nonnegative_weights={parameters.nonnegative_weights},
+                                     ),
+                     mfl.DataOptions(layer={parameters.layer!r},
+                                     group_by={parameters.group_by!r},
+                                    ),
+                    )
+```"""
+        return Command(update={"finished": True, "messages": [ToolMessage(code, tool_call_id=runtime.tool_call_id)]})
