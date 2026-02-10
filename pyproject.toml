@@ -123,6 +123,7 @@ lint.ignore = [
   "D100", # Missing docstring in public module
   "D101", # allow undocumented public classes
   "D102", # allow undocumented public methods
+  "D103", # allow undocumented public functions
   "D104", # Missing docstring in public package
   "D105", # __magic__ methods are often self-explanatory, allow missing docstrings
   "D107", # Missing docstring in __init__

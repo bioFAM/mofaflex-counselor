@@ -21,6 +21,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from pydantic import BaseModel, Field, PositiveInt
 
+from .notebook import analyze_active_notebook, analyze_notebook_data
+
 MEMORY_STORE_PATH = os.path.join(jupyter_data_dir(), "jupyter_ai", "memory.sqlite")
 AVATAR_PATH = str((Path(__file__).parent / "logo.svg").absolute())
 SYSTEM_PROMPT = (resources.files(__package__) / "prompts/chat_system_prompt.txt").read_text()
@@ -130,13 +132,20 @@ class MofaFlexCounselor(BasePersona):
         agent = await self.get_agent(
             model_id=model_id, model_args=model_args, system_prompt=SYSTEM_PROMPT, tools=[self.finalize_configuration]
         )
-
-        context = {"thread_id": self.ychat.get_id(), "username": message.sender}
+        configurable = {"configurable": {"thread_id": self.ychat.get_id(), "username": message.sender}}
 
         async def create_aiter():
+            try:
+                await anext((await self.get_memory_store()).alist(configurable, limit=1))
+            except StopAsyncIteration:  # new thread
+                yield "Analyzing active notebook...\n\n"
+                code = await analyze_active_notebook(self._model)
+                print(code)
+                analyzed = await analyze_notebook_data(code)
+                print(analyzed)
             async for stream_mode, data in agent.astream(
                 {"messages": [{"role": "user", "content": message.body}]},
-                {"configurable": context},
+                configurable,
                 context={"self": self},
                 stream_mode=["messages", "custom"],
             ):
