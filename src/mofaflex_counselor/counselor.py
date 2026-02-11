@@ -1,10 +1,9 @@
 import asyncio
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from importlib import resources
 from io import StringIO
 from pathlib import Path
-from typing import Annotated, Literal
 
 import aiosqlite
 from jupyter_ai_jupyternaut.jupyternaut.jupyternaut import JupyternautPersona
@@ -19,9 +18,10 @@ from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import create_model
 
-from .notebook import analyze_active_notebook, analyze_notebook_data
+from .notebook import DataAnalysisResult, analyze_active_notebook, analyze_notebook_data
+from .parametersmodel import make_mofaflex_parameters_model
 
 MEMORY_STORE_PATH = os.path.join(jupyter_data_dir(), "jupyter_ai", "memory.sqlite")
 AVATAR_PATH = str((Path(__file__).parent / "logo.svg").absolute())
@@ -32,62 +32,6 @@ MODERATOR_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/moderator_ms
 JUDGE_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/judge_msg_prompt.txt").read_text()
 
 DEBUG = os.environ.get("MOFAFLEX_DEBUG")
-
-
-class MofaFlexParameters(BaseModel):
-    n_factors: Annotated[
-        PositiveInt,
-        Field(
-            default=10,
-            description="Number of latent factors. More factors increase training time and memory requirements. Downstream analysis typically focuses on the 5-10 most important factors. Highly complex datasets may require a large number of factors.",
-        ),
-    ]
-    layer: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="Name of the layer in the input file to use. If omitted the X matrix will be used.",
-        ),
-    ]
-    group_by: Annotated[
-        str | Sequence[str] | None,
-        Field(
-            default=None,
-            description="Columns of .obs in the MuData to group the data by. Only useful if the input is a MuData file. Ignored for AnnData files.",
-        ),
-    ]
-    factor_prior: Annotated[
-        Literal["Normal", "Laplace", "Horseshoe", "SnS"],
-        Field(
-            default="Normal",
-            description="Prior distribution to use for the factors. Laplace, Horseshoe and SnS are sparsity-inducing distributions that can yield better interpretability of the results. SnS typically yields the most sparse results. The horseshoe does not achieve exact zeros, but it also does not shrink values that are far from zero. The Laplace shrinks all values.",
-        ),
-    ]
-    weight_prior: Annotated[
-        Literal["Normal", "Laplace", "Horseshoe", "SnS"],
-        Field(
-            default="Normal",
-            description="Prior distribution to use for the weights. Laplace, Horseshoe and SnS are sparsity-inducing distributions that can yield better interpretability of the results. SnS typically yields the most sparse results. The horseshoe does not achieve exact zeros, but it also does not shrink values that are far from zero. The Laplace shrinks all values.",
-        ),
-    ]
-    nonnegative_factors: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="Constrain the factors to be nonnegative. This may improve interpretability in some cases.",
-        ),
-    ]
-    nonnegative_weights: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="Constrain the weights to be nonnegative. This may improve interpretability in some cases.",
-        ),
-    ]
-
-
-class FinalizeConfigurationSchema(BaseModel):
-    parameters: MofaFlexParameters
 
 
 class ModeratorAgentState(AgentState):
@@ -129,24 +73,44 @@ class MofaFlexCounselor(BasePersona):
 
         model_id = JupyternautPersona.config_manager.chat_model
         model_args = JupyternautPersona.config_manager.chat_model_args
-        agent = await self.get_agent(
-            model_id=model_id, model_args=model_args, system_prompt=SYSTEM_PROMPT, tools=[self.finalize_configuration]
-        )
         configurable = {"configurable": {"thread_id": self.ychat.get_id(), "username": message.sender}}
 
         async def create_aiter():
             try:
-                await anext((await self.get_memory_store()).alist(configurable, limit=1))
+                store = await self.get_memory_store()
+                checkpoint = await anext(store.alist(configurable, limit=1))
+                analyzed = configurable["data_analysis_result"] = checkpoint.metadata.get("data_analysis_result")
+                analyzed = DataAnalysisResult.model_validate_json(analyzed)
             except StopAsyncIteration:  # new thread
                 yield "Analyzing active notebook...\n\n"
                 code = await analyze_active_notebook(self._model)
-                print(code)
                 analyzed = await analyze_notebook_data(code)
-                print(analyzed)
+            print(analyzed)
+            parameters_model = make_mofaflex_parameters_model(analyzed)
+            finalize_configuration_schema = create_model("FinalizeConfigurationSchema", parameters=parameters_model)
+            if analyzed is not None:
+                configurable["data_analysis_result"] = analyzed.model_dump_json()
+
+            # can't use functools.partial or lambdas because langchain needs type hints
+            async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
+                return await self.finalize_configuration(finalize_configuration_schema, runtime, parameters)
+
+            agent = await self.get_agent(
+                model_id=model_id,
+                model_args=model_args,
+                system_prompt=SYSTEM_PROMPT,
+                tools=[
+                    tool(
+                        "finalize_configuration",
+                        description=self.finalize_configuration.__doc__,
+                        args_schema=finalize_configuration_schema,
+                    )(finalize_configuration_tool)
+                ],
+            )
+
             async for stream_mode, data in agent.astream(
                 {"messages": [{"role": "user", "content": message.body}]},
                 configurable,
-                context={"self": self},
                 stream_mode=["messages", "custom"],
             ):
                 if stream_mode == "messages":
@@ -184,8 +148,7 @@ class MofaFlexCounselor(BasePersona):
             request = request.override(tool_choice="finalize_configuration")
         return await handler(request)
 
-    @tool(args_schema=FinalizeConfigurationSchema)
-    async def finalize_configuration(runtime: ToolRuntime, parameters: MofaFlexParameters):
+    async def finalize_configuration(self, parameters_model, runtime: ToolRuntime, parameters):
         """Finalize the MOFA-FLEX configuration and generate runnable Python code.
 
         Only call this tool once you have collected all relevant information from the user.
@@ -194,7 +157,6 @@ class MofaFlexCounselor(BasePersona):
         """
         ndebaters = 2
         nrounds = 3
-        self = runtime.context["self"]
         if DEBUG:
             runtime.stream_writer(parameters.model_dump_json())
 
@@ -205,7 +167,7 @@ class MofaFlexCounselor(BasePersona):
             elif isinstance(message, AIMessage) and message.text:
                 transcript.writelines(("ASSISTANT\n", "---------\n", message.text, "\n"))
         debater_system_prompt = DEBATER_SYSTEM_PROMPT.format(
-            parameters=MofaFlexParameters.model_json_schema(), transcript=transcript.getvalue()
+            parameters=parameters_model.model_json_schema(), transcript=transcript.getvalue()
         )
         moderator_system_prompt = MODERATOR_SYSTEM_PROMPT.format(
             selected_params=parameters.model_dump_json(exclude_unset=True)
@@ -224,7 +186,9 @@ class MofaFlexCounselor(BasePersona):
         moderator = create_agent(
             self._model,
             system_prompt=moderator_system_prompt,
-            tools=[self.finalize_configuration_after_debate],
+            tools=[
+                tool("finalize_configuration", args_schema=parameters_model)(self.finalize_configuration_after_debate)
+            ],
             state_schema=ModeratorAgentState,
             middleware=[self.force_finalize],
             name="moderator",
@@ -294,8 +258,7 @@ class MofaFlexCounselor(BasePersona):
             if isinstance(msg, ToolMessage):
                 return msg.text
 
-    @tool("finalize_configuration", args_schema=FinalizeConfigurationSchema)
-    async def finalize_configuration_after_debate(runtime: ToolRuntime, parameters: MofaFlexParameters):
+    async def finalize_configuration_after_debate(self, runtime: ToolRuntime, parameters):
         """Finalize the MOFA-FLEX configuration and generate runnable Python code.
 
         Only call this tool once you have arrived at a final answer.
@@ -310,8 +273,8 @@ model = mfl.MOFAFLEX(data,
                                       nonnegative_factors={parameters.nonnegative_factors},
                                       nonnegative_weights={parameters.nonnegative_weights},
                                      ),
-                     mfl.DataOptions(layer={parameters.layer!r},
-                                     group_by={parameters.group_by!r},
+                     mfl.DataOptions(layer={getattr(parameters, "layer", None)!r},
+                                     group_by={getattr(parameters, "group_by", None)!r},
                                     ),
                     )
 ```"""

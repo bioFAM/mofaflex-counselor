@@ -59,7 +59,7 @@ class DataAnalysisResult(BaseModel):
     grouping_cols: Sequence[str]
     covariates_obs_cols: Sequence[str]
     covariates_obsm_keys: Sequence[str]
-    annotation_varm_keys: Sequence[str]
+    annotations_varm_keys: Sequence[str]
 
 
 async def analyze_active_notebook(model: BaseChatModel) -> NotebookAnalysisResult:

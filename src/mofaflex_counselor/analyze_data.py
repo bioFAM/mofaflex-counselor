@@ -66,7 +66,7 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
         "grouping_cols": grouping_cols,
         "covariates_obs_cols": covariates_obs_cols,
         "covariates_obsm_keys": covariates_obsm_keys,
-        "annotation_varm_keys": annotation_varm_keys,
+        "annotations_varm_keys": annotation_varm_keys,
         "layers": layers,
     }
     return ret if not return_json else json.dumps(ret)
