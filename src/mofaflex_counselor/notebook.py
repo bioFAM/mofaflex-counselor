@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from importlib import resources
 from io import StringIO
 from typing import Annotated, Literal
@@ -55,6 +55,10 @@ class NotebookAnalysisResult(BaseModel):
 
 
 class DataAnalysisResult(BaseModel):
+    type: Literal["MuData", "AnnData"]
+    n_obs: int
+    n_views: int
+    n_vars: int | Mapping[str, int]
     layers: Sequence[str]
     grouping_cols: Sequence[str]
     covariates_obs_cols: Sequence[str]
@@ -85,6 +89,7 @@ async def analyze_notebook_data(data: NotebookAnalysisResult) -> DataAnalysisRes
     msg_id = execute_result["parent_header"]["msg_id"]
     if execute_result["content"]["status"] != "ok":
         ret = None
+        print(execute_result)
     else:
         while True:
             result = await kclient.get_iopub_msg()

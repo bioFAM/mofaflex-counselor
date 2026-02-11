@@ -30,8 +30,14 @@ DEBATER_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/debater_system_
 MODERATOR_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/moderator_system_prompt.txt").read_text()
 MODERATOR_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/moderator_msg_prompt.txt").read_text()
 JUDGE_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/judge_msg_prompt.txt").read_text()
+DATA_PROPERTIES_PROMPT = (resources.files(__package__) / "prompts/data_properties.txt").read_text()
 
 DEBUG = os.environ.get("MOFAFLEX_DEBUG")
+
+
+class UserQueryState(AgentState):
+    data_prompt: str | None
+    notebook_data_variable: str | None
 
 
 class ModeratorAgentState(AgentState):
@@ -55,14 +61,6 @@ class MofaFlexCounselor(BasePersona):
             self._memory_store = AsyncSqliteSaver(conn)
         return self._memory_store
 
-    async def get_agent(self, model_id: str, model_args, system_prompt: str, tools: list | None = None):
-        self._model = ChatLiteLLM(**model_args, model=model_id, streaming=True)
-        memory_store = await self.get_memory_store()
-
-        return create_agent(
-            self._model, system_prompt=system_prompt, checkpointer=memory_store, tools=tools, name="user_facing"
-        )
-
     async def process_message(self, message: Message) -> None:
         if not JupyternautPersona.config_manager.chat_model:
             self.send_message(
@@ -73,6 +71,9 @@ class MofaFlexCounselor(BasePersona):
 
         model_id = JupyternautPersona.config_manager.chat_model
         model_args = JupyternautPersona.config_manager.chat_model_args
+        self._model = ChatLiteLLM(**model_args, model=model_id, streaming=True)
+        memory_store = await self.get_memory_store()
+
         configurable = {"configurable": {"thread_id": self.ychat.get_id(), "username": message.sender}}
 
         async def create_aiter():
@@ -80,6 +81,7 @@ class MofaFlexCounselor(BasePersona):
                 store = await self.get_memory_store()
                 checkpoint = await anext(store.alist(configurable, limit=1))
                 analyzed = configurable["data_analysis_result"] = checkpoint.metadata.get("data_analysis_result")
+                data_prompt = configurable["data_prompt"] = checkpoint.metadata.get("data_prompt")
                 analyzed = DataAnalysisResult.model_validate_json(analyzed)
             except StopAsyncIteration:  # new thread
                 yield "Analyzing active notebook...\n\n"
@@ -88,17 +90,27 @@ class MofaFlexCounselor(BasePersona):
             print(analyzed)
             parameters_model = make_mofaflex_parameters_model(analyzed)
             finalize_configuration_schema = create_model("FinalizeConfigurationSchema", parameters=parameters_model)
+
+            system_prompt = SYSTEM_PROMPT
+            data_prompt = None
             if analyzed is not None:
                 configurable["data_analysis_result"] = analyzed.model_dump_json()
+                data_prompt = configurable["data_prompt"] = DATA_PROPERTIES_PROMPT.format(
+                    type=analyzed.type, n_views=analyzed.n_views, n_obs=analyzed.n_obs, n_vars=analyzed.n_vars
+                )
+                system_prompt += data_prompt
 
             # can't use functools.partial or lambdas because langchain needs type hints
             async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
-                return await self.finalize_configuration(finalize_configuration_schema, runtime, parameters)
+                return await self.finalize_configuration(
+                    finalize_configuration_schema, data_prompt, runtime, parameters
+                )
 
-            agent = await self.get_agent(
-                model_id=model_id,
-                model_args=model_args,
-                system_prompt=SYSTEM_PROMPT,
+            agent = create_agent(
+                self._model,
+                system_prompt=system_prompt,
+                checkpointer=memory_store,
+                state_schema=UserQueryState,
                 tools=[
                     tool(
                         "finalize_configuration",
@@ -106,6 +118,7 @@ class MofaFlexCounselor(BasePersona):
                         args_schema=finalize_configuration_schema,
                     )(finalize_configuration_tool)
                 ],
+                name="user_facing",
             )
 
             async for stream_mode, data in agent.astream(
@@ -148,7 +161,7 @@ class MofaFlexCounselor(BasePersona):
             request = request.override(tool_choice="finalize_configuration")
         return await handler(request)
 
-    async def finalize_configuration(self, parameters_model, runtime: ToolRuntime, parameters):
+    async def finalize_configuration(self, parameters_model, data_prompt, runtime: ToolRuntime, parameters):
         """Finalize the MOFA-FLEX configuration and generate runnable Python code.
 
         Only call this tool once you have collected all relevant information from the user.
@@ -172,6 +185,10 @@ class MofaFlexCounselor(BasePersona):
         moderator_system_prompt = MODERATOR_SYSTEM_PROMPT.format(
             selected_params=parameters.model_dump_json(exclude_unset=True)
         )
+
+        if data_prompt:
+            debater_system_prompt += data_prompt
+            moderator_system_prompt += data_prompt
 
         debaters_checkpointer = InMemorySaver()
         debaters = [
@@ -275,6 +292,7 @@ model = mfl.MOFAFLEX(data,
                                      ),
                      mfl.DataOptions(layer={getattr(parameters, "layer", None)!r},
                                      group_by={getattr(parameters, "group_by", None)!r},
+                                     annotattions_varm_key={getattr(parameters, "annotattions_varm_key", None)!r},
                                     ),
                     )
 ```"""

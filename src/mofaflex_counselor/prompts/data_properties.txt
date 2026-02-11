@@ -1,0 +1,6 @@
+
+The data that you are working with has the following properties:
+Type: {type}
+Number of views: {n_views}
+Number of samples (cells): {n_obs}
+Number of features (genes): {n_vars}

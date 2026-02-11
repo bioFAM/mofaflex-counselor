@@ -1,5 +1,6 @@
 from collections import namedtuple
 from collections.abc import Sequence
+from copy import copy
 from typing import Annotated, Literal
 
 from pydantic import Field, PositiveInt, create_model
@@ -56,10 +57,7 @@ _parameters_conditional = {
     ),
     "group_by": _ConditionalParameterAnnotation(
         str | Sequence[str] | None,
-        Field(
-            default=None,
-            description="Columns of .obs in the MuData to group the data by. Only useful if the input is a MuData file. Ignored for AnnData files.",
-        ),
+        Field(default=None, description="Columns of .obs in the MuData to group the data by."),
     ),
     "annotations_varm_key": _ConditionalParameterAnnotation(
         str | None,
@@ -72,7 +70,13 @@ _parameters_conditional = {
 
 
 def make_mofaflex_parameters_model(analysis_result: DataAnalysisResult | None):
+    parameters_always = _parameters_always
     if analysis_result is None:
+        parameters_always = parameters_always.copy()
+        parameters_always["group_by"] = copy(parameters_always["group_by"])
+        parameters_always["group_by"].__metadata__[
+            0
+        ].description += " Only useful if the input is a MuData file. Ignored for AnnData files."
         conditional_params = {
             param_name: Annotated[param.default_typehint, param.field]
             for param_name, param in _parameters_conditional.items()
@@ -89,8 +93,13 @@ def make_mofaflex_parameters_model(analysis_result: DataAnalysisResult | None):
                 _parameters_conditional["group_by"].field,
             ]
         if analysis_result.annotations_varm_keys:
-            conditional_params["annotations_varm_keys"] = Annotated[
+            conditional_params["annotations_varm_key"] = Annotated[
                 Literal[*analysis_result.annotations_varm_keys] | None,
                 _parameters_conditional["annotations_varm_key"].field,
             ]
+            parameters_always = parameters_always.copy()
+            parameters_always["weight_prior"] = copy(parameters_always["weight_prior"])
+            parameters_always["weight_prior"].__metadata__[
+                0
+            ].description += " The Horseshoe uses the gene sets defined by annotations_varm_key as prior information."
     return create_model("MofaFlexParameters", **_parameters_always, **conditional_params)

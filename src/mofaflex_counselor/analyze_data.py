@@ -19,54 +19,57 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
                 data = md.read_zarr(path)
         else:
             raise
+    if not isinstance(data, ad.AnnData | md.MuData):
+        raise TypeError("Need AnnData or MuData.")
 
-    if isinstance(data, md.MuData):
-        grouping_cols = data.obs.select_dtypes(exclude="float").columns.to_list()
-    else:
-        grouping_cols = []
+    ret = {}
 
     def get_floating_cols(df):
         return df.select_dtypes("float").columns.to_list()
 
     covariates_obs_cols = get_floating_cols(data.obs)
+
+    def get_floating_entries(kvstore, exclude=()):
+        return [
+            k
+            for k, v in kvstore.items()
+            if k not in exclude
+            and (isinstance(v, pd.DataFrame) and v.select_dtypes("float").shape[1] == v.shape[1] or v.dtype.kind == "f")
+        ]
+
+    covariates_obsm_keys = get_floating_entries(data.obsm, exclude=data.mod.keys())
+
+    def get_bool_entries(kvstore, exclude=()):
+        return [
+            k
+            for k, v in kvstore.items()
+            if k not in exclude
+            and (isinstance(v, pd.DataFrame) and v.select_dtypes("bool").shape[1] == v.shape[1] or v.dtype.kind == "b")
+        ]
+
+    annotations_varm_keys = get_bool_entries(data.varm, exclude=data.mod.keys())
+
+    ret["n_obs"] = data.n_obs
     if isinstance(data, md.MuData):
+        ret["type"] = "MuData"
+        ret["n_views"] = len(data.mod)
+        ret["n_vars"] = {modname: mod.n_vars for modname, mod in data.mod.items()}
+        ret["layers"] = list(reduce(operator.and_, (mod.layers.keys() for mod in data.mod.values())))
+        ret["grouping_cols"] = data.obs.select_dtypes(exclude="float").columns.to_list()
+
         for mod in data.mod.values():
             covariates_obs_cols.extend(get_floating_cols(mod.obs))
-
-    def get_floating_entries(kvstore):
-        return [
-            k
-            for k, v in kvstore.items()
-            if isinstance(v, pd.DataFrame) and v.select_dtypes("float").shape[1] == v.shape[1] or v.dtype.kind == "f"
-        ]
-
-    covariates_obsm_keys = get_floating_entries(data.obsm)
-    if isinstance(data, md.MuData):
-        for mod in data.mod.values():
             covariates_obsm_keys.extend(get_floating_entries(mod.obsm))
-
-    def get_bool_entries(kvstore):
-        return [
-            k
-            for k, v in kvstore.items()
-            if isinstance(v, pd.DataFrame) and v.select_dtypes("bool").shape[1] == v.shape[1] or v.dtype.kind == "b"
-        ]
-
-    annotation_varm_keys = get_bool_entries(data.varm)
-    if isinstance(data, md.MuData):
-        for mod in data.mod.values():
-            annotation_varm_keys.extend(get_bool_entries(mod.varm))
-
-    if isinstance(data, ad.AnnData):
-        layers = list(data.layers.keys())
+            annotations_varm_keys.extend(k for k in get_bool_entries(mod.varm))
     else:
-        layers = list(reduce(operator.and_, (mod.layers.keys() for mod in data.mod.values())))
+        ret["type"] = "AnnData"
+        ret["n_views"] = 1
+        ret["n_vars"] = data.n_vars
+        ret["layers"] = list(data.layers.keys())
+        ret["grouping_cols"] = []
 
-    ret = {
-        "grouping_cols": grouping_cols,
-        "covariates_obs_cols": covariates_obs_cols,
-        "covariates_obsm_keys": covariates_obsm_keys,
-        "annotations_varm_keys": annotation_varm_keys,
-        "layers": layers,
-    }
+    ret["covariates_obs_cols"] = covariates_obs_cols
+    ret["covariates_obsm_keys"] = covariates_obsm_keys
+    ret["annotations_varm_keys"] = annotations_varm_keys
+
     return ret if not return_json else json.dumps(ret)
