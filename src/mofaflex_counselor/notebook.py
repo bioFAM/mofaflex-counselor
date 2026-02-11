@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from importlib import resources
 from io import StringIO
 from typing import Annotated, Literal
@@ -7,10 +8,12 @@ from jupyter_client.asynchronous.client import AsyncKernelClient
 from langchain.messages import AIMessage, HumanMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
+from pydantic_core import ValidationError
 
 NOTEBOOK_ANALYSIS_SYSTEM_PROMPT = (
     resources.files(__package__) / "prompts/notebook_analyzer_system_prompt.txt"
 ).read_text()
+DATA_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_data.py").read_text()
 
 
 async def get_active_notebook_code() -> str | None:
@@ -51,6 +54,14 @@ class NotebookAnalysisResult(BaseModel):
     path: Annotated[str | None, Field(description="Path that the object was loaded from.")]
 
 
+class DataAnalysisResult(BaseModel):
+    layers: Sequence[str]
+    grouping_cols: Sequence[str]
+    covariates_obs_cols: Sequence[str]
+    covariates_obsm_keys: Sequence[str]
+    annotation_varm_keys: Sequence[str]
+
+
 async def analyze_active_notebook(model: BaseChatModel) -> NotebookAnalysisResult:
     code = await get_active_notebook_code()
     if code is None:
@@ -62,9 +73,32 @@ async def analyze_active_notebook(model: BaseChatModel) -> NotebookAnalysisResul
     return response
 
 
-async def analyze_notebook_data(data: NotebookAnalysisResult):
+async def analyze_notebook_data(data: NotebookAnalysisResult) -> DataAnalysisResult | None:
     kclient = await get_active_notebook_kernel_client()
     await kclient.stop_listening()
-    ret = await kclient.execute(rf"print({data.variable_name}.obs.columns)", silent=True, reply=True, timeout=1)
+    await kclient.execute(DATA_ANALYSIS_FUNCTION, silent=True, reply=True)
+    execute_result = await kclient.execute(
+        f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
+        store_history=False,
+        reply=True,
+    )
+    msg_id = execute_result["parent_header"]["msg_id"]
+    if execute_result["content"]["status"] != "ok":
+        ret = None
+    else:
+        while True:
+            result = await kclient.get_iopub_msg()
+            if result["parent_header"].get("msg_id") == msg_id and result["msg_type"] == "stream":
+                break
+        if result["content"]["name"] != "stdout":
+            ret = None
+        else:
+            try:
+                ret = DataAnalysisResult.model_validate_json(result["content"]["text"])
+            except ValidationError:
+                ret = None
+            except Exception:  # noqa: BLE001
+                ret = None
+    kclient.execute("del ____analyze_data", silent=True)
     await kclient.start_listening()
     return ret
