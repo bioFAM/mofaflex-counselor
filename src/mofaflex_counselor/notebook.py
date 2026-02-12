@@ -10,43 +10,15 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
 from pydantic_core import ValidationError
 
-NOTEBOOK_ANALYSIS_SYSTEM_PROMPT = (
+from .utils import DEBUG
+
+_NOTEBOOK_ANALYSIS_SYSTEM_PROMPT = (
     resources.files(__package__) / "prompts/notebook_analyzer_system_prompt.txt"
 ).read_text()
-DATA_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_data.py").read_text()
+_DATA_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_data.py").read_text()
 
 
-async def get_active_notebook_code() -> str | None:
-    nb_path = await notebook.get_active_notebook()
-    if not nb_path:
-        return
-    file_id = await utils.get_file_id(nb_path)
-    if not file_id:
-        return
-    ydoc = await utils.get_jupyter_ydoc(file_id)
-    active_cell_id = notebook._get_active_cell_id_from_ydoc(ydoc)
-    code = StringIO()
-    for cellidx in range(ydoc.cell_number):
-        cell = ydoc.get_cell(cellidx)
-        if cell.get("cell_type") == "code":
-            source = cell["source"]
-            code.write(source)
-            if len(source) > 0 and source[-1] != "\n":
-                code.write("\n")
-            if cell["id"] == active_cell_id:
-                break
-
-    return code.getvalue()
-
-
-async def get_active_notebook_kernel_client() -> AsyncKernelClient:
-    nb_path = await notebook.get_active_notebook()
-    session_manager = utils.get_serverapp().session_manager
-    session = await session_manager.get_session(path=nb_path)
-    return session_manager.get_kernel_client(session["kernel"]["id"])
-
-
-class NotebookAnalysisResult(BaseModel):
+class _NotebookAnalysisResult(BaseModel):
     variable_name: Annotated[
         str | None,
         Field(description="The name of the variable holding the most recently modified AnnData or MuData object."),
@@ -70,21 +42,47 @@ class DataAnalysisResult(BaseModel):
     annotations_varm_keys: Sequence[str]
 
 
-async def analyze_active_notebook(model: BaseChatModel) -> NotebookAnalysisResult:
-    code = await get_active_notebook_code()
+async def _get_active_notebook_code(nb_path: str) -> str | None:
+    file_id = await utils.get_file_id(nb_path)
+    if not file_id:
+        return
+    ydoc = await utils.get_jupyter_ydoc(file_id)
+    active_cell_id = notebook._get_active_cell_id_from_ydoc(ydoc)
+    code = StringIO()
+    for cellidx in range(ydoc.cell_number):
+        cell = ydoc.get_cell(cellidx)
+        if cell.get("cell_type") == "code":
+            source = cell["source"]
+            code.write(source)
+            if len(source) > 0 and source[-1] != "\n":
+                code.write("\n")
+        if cell["id"] == active_cell_id:
+            break
+
+    return code.getvalue()
+
+
+async def _get_active_notebook_kernel_client(nb_path: str) -> AsyncKernelClient:
+    session_manager = utils.get_serverapp().session_manager
+    session = await session_manager.get_session(path=nb_path)
+    return session_manager.get_kernel_client(session["kernel"]["id"])
+
+
+async def _analyze_active_notebook_code(model: BaseChatModel, nb_path: str) -> _NotebookAnalysisResult:
+    code = await _get_active_notebook_code(nb_path)
     if code is None:
         return None
 
-    response = await model.with_structured_output(NotebookAnalysisResult).ainvoke(
-        [AIMessage(NOTEBOOK_ANALYSIS_SYSTEM_PROMPT), HumanMessage(code)]
+    response = await model.with_structured_output(_NotebookAnalysisResult).ainvoke(
+        [AIMessage(_NOTEBOOK_ANALYSIS_SYSTEM_PROMPT), HumanMessage(code)]
     )
     return response
 
 
-async def analyze_notebook_data(data: NotebookAnalysisResult) -> DataAnalysisResult | None:
-    kclient = await get_active_notebook_kernel_client()
+async def _analyze_notebook_data(data: _NotebookAnalysisResult, nb_path: str) -> DataAnalysisResult | None:
+    kclient = await _get_active_notebook_kernel_client(nb_path)
     await kclient.stop_listening()
-    await kclient.execute(DATA_ANALYSIS_FUNCTION, silent=True, reply=True)
+    await kclient.execute(_DATA_ANALYSIS_FUNCTION, silent=True, reply=True)
     execute_result = await kclient.execute(
         f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
         store_history=False,
@@ -93,7 +91,8 @@ async def analyze_notebook_data(data: NotebookAnalysisResult) -> DataAnalysisRes
     msg_id = execute_result["parent_header"]["msg_id"]
     if execute_result["content"]["status"] != "ok":
         ret = None
-        print(execute_result)
+        if DEBUG:
+            print(execute_result)
     else:
         while True:
             result = await kclient.get_iopub_msg()
@@ -111,3 +110,17 @@ async def analyze_notebook_data(data: NotebookAnalysisResult) -> DataAnalysisRes
     kclient.execute("del ____analyze_data", silent=True)
     await kclient.start_listening()
     return ret
+
+
+async def analyze_active_notebook(model: BaseChatModel) -> DataAnalysisResult | None:
+    nb_path = await notebook.get_active_notebook()
+    if not nb_path:
+        yield None
+        return
+    yield "Analyzing active notebook...\n\n"
+    res = await _analyze_active_notebook_code(model, nb_path)
+    res = await _analyze_notebook_data(res, nb_path)
+    if res is None:
+        yield "Notebook analysis failed, falling back to defaults...\n\n"
+    yield res
+    return

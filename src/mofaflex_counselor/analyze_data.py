@@ -25,7 +25,7 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
         for var_name, var in globals().items():
             if isinstance(var, ad.AnnData):
                 candidates_anndata[var_name] = var
-            elif isinstance(var, ad.MuData):
+            elif isinstance(var, md.MuData):
                 candidates_mudata[var_name] = var
         if len(candidates_mudata):
             ret["var_name"], data = next(reversed(candidates_mudata.items()))

@@ -20,8 +20,9 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from pydantic import create_model
 
-from .notebook import DataAnalysisResult, analyze_active_notebook, analyze_notebook_data
+from .notebook import DataAnalysisResult, analyze_active_notebook
 from .parametersmodel import make_mofaflex_parameters_model
+from .utils import DEBUG
 
 MEMORY_STORE_PATH = os.path.join(jupyter_data_dir(), "jupyter_ai", "memory.sqlite")
 AVATAR_PATH = str((Path(__file__).parent / "logo.svg").absolute())
@@ -31,8 +32,6 @@ MODERATOR_SYSTEM_PROMPT = (resources.files(__package__) / "prompts/moderator_sys
 MODERATOR_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/moderator_msg_prompt.txt").read_text()
 JUDGE_MESSAGE_PROMPT = (resources.files(__package__) / "prompts/judge_msg_prompt.txt").read_text()
 DATA_PROPERTIES_PROMPT = (resources.files(__package__) / "prompts/data_properties.txt").read_text()
-
-DEBUG = os.environ.get("MOFAFLEX_DEBUG")
 
 
 class ModeratorAgentState(AgentState):
@@ -80,10 +79,11 @@ class MofaFlexCounselor(BasePersona):
                 data_prompt = configurable["data_prompt"] = checkpoint.metadata.get("data_prompt")
                 analyzed = DataAnalysisResult.model_validate_json(analyzed)
             except StopAsyncIteration:  # new thread
-                yield "Analyzing active notebook...\n\n"
-                code = await analyze_active_notebook(self._model)
-                analyzed = await analyze_notebook_data(code)
-            print(analyzed)
+                async for analyzed in analyze_active_notebook(self._model):
+                    if isinstance(analyzed, str):
+                        yield analyzed
+            if DEBUG:
+                yield f"`{analyzed}`"
             parameters_model = make_mofaflex_parameters_model(analyzed)
             finalize_configuration_schema = create_model("FinalizeConfigurationSchema", parameters=parameters_model)
 
@@ -97,7 +97,6 @@ class MofaFlexCounselor(BasePersona):
                 system_prompt += data_prompt
                 var_name = analyzed.var_name
             else:
-                yield "Notebook analysis failed, falling back to defaults..."
                 var_name = None
 
             # can't use functools.partial or lambdas because langchain needs type hints
