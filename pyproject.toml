@@ -25,11 +25,15 @@ dynamic = [ "version" ]
 dependencies = [
   "jupyter-ai-jupyternaut",
   "jupyter-ai-persona-manager",
+  "jupyter-client",
   "jupyter-core",
+  "jupyterlab-chat",
   "langchain>=1",
+  "langchain-core",
   "langchain-litellm",
   "langgraph-checkpoint-sqlite>=3",
   "pydantic",
+  "pydantic-core",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://mofaflex-counselor.readthedocs.io/"
