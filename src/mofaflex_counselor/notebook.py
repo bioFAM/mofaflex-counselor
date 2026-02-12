@@ -55,6 +55,7 @@ class NotebookAnalysisResult(BaseModel):
 
 
 class DataAnalysisResult(BaseModel):
+    var_name: str | None = None
     type: Literal["MuData", "AnnData"]
     n_obs: int
     n_views: int

@@ -35,14 +35,10 @@ DATA_PROPERTIES_PROMPT = (resources.files(__package__) / "prompts/data_propertie
 DEBUG = os.environ.get("MOFAFLEX_DEBUG")
 
 
-class UserQueryState(AgentState):
-    data_prompt: str | None
-    notebook_data_variable: str | None
-
-
 class ModeratorAgentState(AgentState):
     finished: bool
     judging: bool
+    notebook_var_name: str | None
 
 
 class MofaFlexCounselor(BasePersona):
@@ -99,18 +95,21 @@ class MofaFlexCounselor(BasePersona):
                     type=analyzed.type, n_views=analyzed.n_views, n_obs=analyzed.n_obs, n_vars=analyzed.n_vars
                 )
                 system_prompt += data_prompt
+                var_name = analyzed.var_name
+            else:
+                yield "Notebook analysis failed, falling back to defaults..."
+                var_name = None
 
             # can't use functools.partial or lambdas because langchain needs type hints
             async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
                 return await self.finalize_configuration(
-                    finalize_configuration_schema, data_prompt, runtime, parameters
+                    finalize_configuration_schema, data_prompt, var_name, runtime, parameters
                 )
 
             agent = create_agent(
                 self._model,
                 system_prompt=system_prompt,
                 checkpointer=memory_store,
-                state_schema=UserQueryState,
                 tools=[
                     tool(
                         "finalize_configuration",
@@ -141,7 +140,7 @@ class MofaFlexCounselor(BasePersona):
         await self.stream_message(response_aiter)
 
     @staticmethod
-    async def moderator(runtime, debaters, moderator, debater_responses, round):
+    async def moderator(runtime, debaters, moderator, debater_responses, round, var_name):
         debater_msgs = [
             f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
             for i, response in enumerate(debater_responses)
@@ -150,7 +149,12 @@ class MofaFlexCounselor(BasePersona):
         if DEBUG:
             runtime.stream_writer(moderator_msg)
         moderator_response = await moderator.ainvoke(
-            {"messages": [HumanMessage(moderator_msg)], "finished": False, "judging": False}
+            {
+                "messages": [HumanMessage(moderator_msg)],
+                "finished": False,
+                "judging": False,
+                "notebook_var_name": var_name,
+            }
         )
 
         return moderator_response, debater_msgs
@@ -161,7 +165,7 @@ class MofaFlexCounselor(BasePersona):
             request = request.override(tool_choice="finalize_configuration")
         return await handler(request)
 
-    async def finalize_configuration(self, parameters_model, data_prompt, runtime: ToolRuntime, parameters):
+    async def finalize_configuration(self, parameters_model, data_prompt, var_name, runtime: ToolRuntime, parameters):
         """Finalize the MOFA-FLEX configuration and generate runnable Python code.
 
         Only call this tool once you have collected all relevant information from the user.
@@ -232,7 +236,7 @@ class MofaFlexCounselor(BasePersona):
         )
         for round in range(nrounds - 1):
             moderator_response, debater_msgs = await self.moderator(
-                runtime, debaters, moderator, debater_responses, round
+                runtime, debaters, moderator, debater_responses, round, var_name
             )
             if DEBUG:
                 runtime.stream_writer(moderator_response["messages"][-1].text)
@@ -260,14 +264,21 @@ class MofaFlexCounselor(BasePersona):
                 )
             )
 
-        moderator_response, debater_msgs = await self.moderator(runtime, debaters, moderator, debater_responses)
+        moderator_response, debater_msgs = await self.moderator(
+            runtime, debaters, moderator, debater_responses, round, var_name
+        )
         if DEBUG:
             runtime.stream_writer(moderator_response["messages"][-1].text)
 
         if not moderator_response["finished"]:
             judge_msg = JUDGE_MESSAGE_PROMPT.format(debater_responses="".join(debater_msgs))
             moderator_response = await moderator.ainvoke(
-                {"messages": [HumanMessage(judge_msg)], "finished": False, "judging": True}
+                {
+                    "messages": [HumanMessage(judge_msg)],
+                    "finished": False,
+                    "judging": True,
+                    "notebook_var_name": var_name,
+                }
             )
         if not moderator_response["finished"]:
             self.send_message("Something went horribly wrong.")
@@ -283,7 +294,7 @@ class MofaFlexCounselor(BasePersona):
         if DEBUG:
             runtime.stream_writer(parameters.model_dump_json())
         code = f"""```python
-model = mfl.MOFAFLEX(data,
+model = mfl.MOFAFLEX({runtime.state["notebook_var_name"] or "data"},
                      mfl.ModelOptions(n_factors={parameters.n_factors},
                                       factor_prior={parameters.factor_prior!r},
                                       weight_prior={parameters.weight_prior!r},

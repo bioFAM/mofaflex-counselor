@@ -8,6 +8,8 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
     import mudata as md
     import pandas as pd
 
+    ret = {"var_name": var_name}
+    data = None
     try:
         data = globals()[var_name]
     except KeyError:
@@ -17,12 +19,20 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
                 data = md.read(path, backed=True)
             else:
                 data = md.read_zarr(path)
-        else:
-            raise
-    if not isinstance(data, ad.AnnData | md.MuData):
-        raise TypeError("Need AnnData or MuData.")
 
-    ret = {}
+    if not isinstance(data, ad.AnnData | md.MuData):
+        candidates_anndata, candidates_mudata = {}, {}
+        for var_name, var in globals().items():
+            if isinstance(var, ad.AnnData):
+                candidates_anndata[var_name] = var
+            elif isinstance(var, ad.MuData):
+                candidates_mudata[var_name] = var
+        if len(candidates_mudata):
+            ret["var_name"], data = next(reversed(candidates_mudata.items()))
+        elif len(candidates_anndata):
+            ret["var_name"], data = next(reversed(candidates_anndata.items()))
+        else:
+            raise RuntimeError("No AnnData or MuData object found.")
 
     def get_floating_cols(df):
         return df.select_dtypes("float").columns.to_list()
