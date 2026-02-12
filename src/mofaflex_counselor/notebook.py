@@ -24,6 +24,7 @@ async def get_active_notebook_code() -> str | None:
     if not file_id:
         return
     ydoc = await utils.get_jupyter_ydoc(file_id)
+    active_cell_id = notebook._get_active_cell_id_from_ydoc(ydoc)
     code = StringIO()
     for cellidx in range(ydoc.cell_number):
         cell = ydoc.get_cell(cellidx)
@@ -32,6 +33,8 @@ async def get_active_notebook_code() -> str | None:
             code.write(source)
             if len(source) > 0 and source[-1] != "\n":
                 code.write("\n")
+            if cell["id"] == active_cell_id:
+                break
 
     return code.getvalue()
 
