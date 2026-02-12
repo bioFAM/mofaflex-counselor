@@ -38,6 +38,7 @@ class ModeratorAgentState(AgentState):
     finished: bool
     judging: bool
     notebook_var_name: str | None
+    notebook_var_type: str | None
 
 
 class MofaFlexCounselor(BasePersona):
@@ -77,7 +78,8 @@ class MofaFlexCounselor(BasePersona):
                 checkpoint = await anext(store.alist(configurable, limit=1))
                 analyzed = configurable["data_analysis_result"] = checkpoint.metadata.get("data_analysis_result")
                 data_prompt = configurable["data_prompt"] = checkpoint.metadata.get("data_prompt")
-                analyzed = DataAnalysisResult.model_validate_json(analyzed)
+                if analyzed is not None:
+                    analyzed = DataAnalysisResult.model_validate_json(analyzed)
             except StopAsyncIteration:  # new thread
                 async for analyzed in analyze_active_notebook(self._model):
                     if isinstance(analyzed, str):
@@ -96,13 +98,15 @@ class MofaFlexCounselor(BasePersona):
                 )
                 system_prompt += data_prompt
                 var_name = analyzed.var_name
+                var_type = analyzed.type
             else:
                 var_name = None
+                var_type = None
 
             # can't use functools.partial or lambdas because langchain needs type hints
             async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
                 return await self.finalize_configuration(
-                    finalize_configuration_schema, data_prompt, var_name, runtime, parameters
+                    finalize_configuration_schema, data_prompt, var_name, var_type, runtime, parameters
                 )
 
             agent = create_agent(
@@ -139,7 +143,7 @@ class MofaFlexCounselor(BasePersona):
         await self.stream_message(response_aiter)
 
     @staticmethod
-    async def moderator(runtime, debaters, moderator, debater_responses, round, var_name):
+    async def moderator(runtime, debaters, moderator, debater_responses, round, var_name, var_type):
         debater_msgs = [
             f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
             for i, response in enumerate(debater_responses)
@@ -153,6 +157,7 @@ class MofaFlexCounselor(BasePersona):
                 "finished": False,
                 "judging": False,
                 "notebook_var_name": var_name,
+                "notebook_var_type": var_type,
             }
         )
 
@@ -164,7 +169,9 @@ class MofaFlexCounselor(BasePersona):
             request = request.override(tool_choice="finalize_configuration")
         return await handler(request)
 
-    async def finalize_configuration(self, parameters_model, data_prompt, var_name, runtime: ToolRuntime, parameters):
+    async def finalize_configuration(
+        self, parameters_model, data_prompt, var_name, var_type, runtime: ToolRuntime, parameters
+    ):
         """Finalize the MOFA-FLEX configuration and generate runnable Python code.
 
         Only call this tool once you have collected all relevant information from the user.
@@ -235,7 +242,7 @@ class MofaFlexCounselor(BasePersona):
         )
         for round in range(nrounds - 1):
             moderator_response, debater_msgs = await self.moderator(
-                runtime, debaters, moderator, debater_responses, round, var_name
+                runtime, debaters, moderator, debater_responses, round, var_name, var_type
             )
             if DEBUG:
                 runtime.stream_writer(moderator_response["messages"][-1].text)
@@ -277,6 +284,7 @@ class MofaFlexCounselor(BasePersona):
                     "finished": False,
                     "judging": True,
                     "notebook_var_name": var_name,
+                    "notebook_var_type": var_type,
                 }
             )
         if not moderator_response["finished"]:
@@ -292,8 +300,13 @@ class MofaFlexCounselor(BasePersona):
         """
         if DEBUG:
             runtime.stream_writer(parameters.model_dump_json())
+        data = runtime.state["notebook_var_name"] or "data"
+        if (
+            var_type := runtime.state["notebook_var_type"] or getattr(parameters, "data_type", None)
+        ) and var_type == "AnnData":
+            data = f"{{'group_1': {{'view_1': {data}}}}}"
         code = f"""```python
-model = mfl.MOFAFLEX({runtime.state["notebook_var_name"] or "data"},
+model = mfl.MOFAFLEX({data},
                      mfl.ModelOptions(n_factors={parameters.n_factors},
                                       factor_prior={parameters.factor_prior!r},
                                       weight_prior={parameters.weight_prior!r},

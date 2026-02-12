@@ -30,7 +30,7 @@ class _NotebookAnalysisResult(BaseModel):
 
 
 class DataAnalysisResult(BaseModel):
-    var_name: str | None = None
+    var_name: str
     type: Literal["MuData", "AnnData"]
     n_obs: int
     n_views: int

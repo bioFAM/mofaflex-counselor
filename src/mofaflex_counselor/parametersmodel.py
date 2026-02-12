@@ -48,6 +48,9 @@ _parameters_always = {
 }
 
 _parameters_conditional = {
+    "data_type": _ConditionalParameterAnnotation(
+        Literal["AnnData", "MuData"], Field(description="Type of the input data.")
+    ),
     "layer": _ConditionalParameterAnnotation(
         str | None,
         Field(
