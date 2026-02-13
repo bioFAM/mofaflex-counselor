@@ -76,9 +76,12 @@ def make_mofaflex_parameters_model(analysis_result: DataAnalysisResult | None):
     parameters_always = _parameters_always
     if analysis_result is None:
         parameters_conditional = _parameters_conditional.copy()
-        groupby = _parameters_conditional["group_by"]
-        field = copy(groupby.field)
-        field.description += " Only useful if the input is a MuData file. Ignored for AnnData files."
+        groupby = parameters_conditional["group_by"]
+        field = Field(
+            default=groupby.field.default,
+            description=groupby.field.description
+            + " Only useful if the input is a MuData file. Ignored for AnnData files.",
+        )
         parameters_conditional["group_by"] = _ConditionalParameterAnnotation(groupby.default_typehint, field)
         conditional_params = {
             param_name: Annotated[param.default_typehint, param.field]
