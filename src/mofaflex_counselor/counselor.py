@@ -305,6 +305,7 @@ class MofaFlexCounselor(BasePersona):
         ) and var_type == "AnnData":
             data = f"{{'group_1': {{'view_1': {data}}}}}"
         code = f"""```python
+import mofaflex as mfl
 model = mfl.MOFAFLEX({data},
                      mfl.ModelOptions(n_factors={parameters.n_factors},
                                       factor_prior={parameters.factor_prior!r},
