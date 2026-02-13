@@ -143,25 +143,31 @@ class MofaFlexCounselor(BasePersona):
         await self.stream_message(response_aiter)
 
     @staticmethod
-    async def moderator(runtime, debaters, moderator, debater_responses, round, var_name, var_type):
-        debater_msgs = [
-            f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
-            for i, response in enumerate(debater_responses)
-        ]
-        moderator_msg = MODERATOR_MESSAGE_PROMPT.format(round=round + 1, debater_responses="".join(debater_msgs))
+    async def moderator(runtime, debaters, moderator, debater_responses, round, var_name, var_type, judging=False):
+        if not isinstance(debater_responses, str):
+            debater_responses = [
+                f"Debater {i + 1} argued:\n-----------------\n{response['messages'][-1].text}\n\n"
+                for i, response in enumerate(debater_responses)
+            ]
+        if not judging:
+            moderator_msg = MODERATOR_MESSAGE_PROMPT.format(
+                round=round + 1, debater_responses="".join(debater_responses)
+            )
+        else:
+            moderator_msg = JUDGE_MESSAGE_PROMPT.format(debater_responses="".join(debater_responses))
         if DEBUG:
             runtime.stream_writer(moderator_msg)
         moderator_response = await moderator.ainvoke(
             {
                 "messages": [HumanMessage(moderator_msg)],
                 "finished": False,
-                "judging": False,
+                "judging": judging,
                 "notebook_var_name": var_name,
                 "notebook_var_type": var_type,
             }
         )
 
-        return moderator_response, debater_msgs
+        return moderator_response, debater_responses
 
     @wrap_model_call
     async def force_finalize(request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]):
@@ -277,15 +283,8 @@ class MofaFlexCounselor(BasePersona):
             runtime.stream_writer(moderator_response["messages"][-1].text)
 
         if not moderator_response["finished"]:
-            judge_msg = JUDGE_MESSAGE_PROMPT.format(debater_responses="".join(debater_msgs))
-            moderator_response = await moderator.ainvoke(
-                {
-                    "messages": [HumanMessage(judge_msg)],
-                    "finished": False,
-                    "judging": True,
-                    "notebook_var_name": var_name,
-                    "notebook_var_type": var_type,
-                }
+            moderator_response, _ = await self.moderator(
+                runtime, debaters, moderator, debater_msgs, round, var_name, judging=True
             )
         if not moderator_response["finished"]:
             self.send_message("Something went horribly wrong.")
