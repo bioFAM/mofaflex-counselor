@@ -315,7 +315,7 @@ model = mfl.MOFAFLEX({data},
                                      ),
                      mfl.DataOptions(layer={getattr(parameters, "layer", None)!r},
                                      group_by={getattr(parameters, "group_by", None)!r},
-                                     annotattions_varm_key={getattr(parameters, "annotattions_varm_key", None)!r},
+                                     annotations_varm_key={getattr(parameters, "annotattions_varm_key", None)!r},
                                     ),
                     )
 ```"""
