@@ -60,7 +60,10 @@ _parameters_conditional = {
     ),
     "group_by": _ConditionalParameterAnnotation(
         str | Sequence[str] | None,
-        Field(default=None, description="Columns of .obs in the MuData to group the data by."),
+        Field(
+            default=None,
+            description="Columns of .obs in the MuData to group the data by. Groups will only affect the sparsity structure of the factors, if a sparsity-inducing prior is used. Groups cannot be used for batch effect correction.",
+        ),
     ),
     "annotations_varm_key": _ConditionalParameterAnnotation(
         str | None,
