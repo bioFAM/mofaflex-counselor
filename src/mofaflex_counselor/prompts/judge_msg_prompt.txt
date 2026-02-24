@@ -3,4 +3,4 @@ The final round of the debate has ended.
 {debater_responses}
 
 You, as the moderator, will evaluate both sides' answers and determine the final answer.
-Call the finalize_configuration tool with the final MOFA-FLEX parameters.
+Call the finalize_configuration tool with the final MOFA-FLEX parameters and a summary of the reasoning for the final parameter choice.

@@ -6,6 +6,7 @@ If a parameter value was not directly provided by the user but determined by you
 If you think that you have determined all parameters, explain your choices to the user and ask to confirm.
 Call the finalize_configuration tool with the final parameter values.
 Only call the finalize_configuration tool if you have all the facts!
+Do not call the finalize_configuration tool before confirming the final parameter choice with the user!
 Do not ask the user any more questions after calling the finalize_configuration tool.
 Use the output of the finailze_configuration tool in your final response.
 

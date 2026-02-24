@@ -4,6 +4,7 @@ from collections.abc import Callable
 from importlib import resources
 from io import StringIO
 from pathlib import Path
+from typing import Annotated
 
 import aiosqlite
 from jupyter_ai_jupyternaut.jupyternaut.jupyternaut import JupyternautPersona
@@ -18,7 +19,7 @@ from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
-from pydantic import create_model
+from pydantic import Field, create_model
 
 from .notebook import DataAnalysisResult, analyze_active_notebook
 from .parametersmodel import make_mofaflex_parameters_model
@@ -106,7 +107,7 @@ class MofaFlexCounselor(BasePersona):
             # can't use functools.partial or lambdas because langchain needs type hints
             async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
                 return await self.finalize_configuration(
-                    finalize_configuration_schema, data_prompt, var_name, var_type, runtime, parameters
+                    parameters_model, data_prompt, var_name, var_type, runtime, parameters
                 )
 
             agent = create_agent(
@@ -182,7 +183,9 @@ class MofaFlexCounselor(BasePersona):
 
         Only call this tool once you have collected all relevant information from the user.
         Provide the Python code to the user in a markdown code block.
-        Do not edit or change the output of the tool in any way.
+        Do not edit or change the code in any way.
+        The tool additionally outputs a summary of the reasoning leading to the final parameter choice.
+        Provide the summary to the user also.
         """
         ndebaters = 2
         nrounds = 3
@@ -216,11 +219,18 @@ class MofaFlexCounselor(BasePersona):
             )
             for i in range(ndebaters)
         ]
+        finalize_configuration_schema = create_model(
+            "FinalizeConfigurationSchema",
+            parameters=parameters_model,
+            summary=Annotated[str, Field(description="Summary of the reasoning for the final parameter choice.")],
+        )
         moderator = create_agent(
             self._model,
             system_prompt=moderator_system_prompt,
             tools=[
-                tool("finalize_configuration", args_schema=parameters_model)(self.finalize_configuration_after_debate)
+                tool("finalize_configuration", args_schema=finalize_configuration_schema)(
+                    self.finalize_configuration_after_debate
+                )
             ],
             state_schema=ModeratorAgentState,
             middleware=[self.force_finalize],
@@ -292,7 +302,7 @@ class MofaFlexCounselor(BasePersona):
             if isinstance(msg, ToolMessage):
                 return msg.text
 
-    async def finalize_configuration_after_debate(self, runtime: ToolRuntime, parameters):
+    async def finalize_configuration_after_debate(self, runtime: ToolRuntime, parameters, summary):
         """Finalize the MOFA-FLEX configuration and generate runnable Python code.
 
         Only call this tool once you have arrived at a final answer.
@@ -319,7 +329,17 @@ model = mfl.MOFAFLEX({data},
                                     ),
                     )
 ```"""
-        return Command(update={"finished": True, "messages": [ToolMessage(code, tool_call_id=runtime.tool_call_id)]})
+        return Command(
+            update={
+                "finished": True,
+                "messages": [
+                    ToolMessage(
+                        content_blocks=[{"type": "text", "text": code}, {"type": "text", "text": summary}],
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ],
+            }
+        )
 
     def shutdown(self):
         if hasattr(self, "_memory_store"):
