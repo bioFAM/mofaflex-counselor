@@ -1,4 +1,3 @@
-
 The data that you are working with has the following properties:
 Type: {type}
 Number of views: {n_views}

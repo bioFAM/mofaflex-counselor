@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping, Sequence
 from importlib import resources
 from io import StringIO
@@ -16,6 +17,7 @@ _NOTEBOOK_ANALYSIS_SYSTEM_PROMPT = (
     resources.files(__package__) / "prompts/notebook_analyzer_system_prompt.txt"
 ).read_text()
 _DATA_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_data.py").read_text()
+_MOFAFLEX_API_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_mofaflex_api.py").read_text()
 
 
 class _NotebookAnalysisResult(BaseModel):
@@ -79,15 +81,11 @@ async def _analyze_active_notebook_code(model: BaseChatModel, nb_path: str) -> _
     return response
 
 
-async def _analyze_notebook_data(data: _NotebookAnalysisResult, nb_path: str) -> DataAnalysisResult | None:
+async def _run_in_active_kernel(nb_path: str, setup: str, execute: str, teardown: str) -> str | None:
     kclient = await _get_active_notebook_kernel_client(nb_path)
     await kclient.stop_listening()
-    await kclient.execute(_DATA_ANALYSIS_FUNCTION, silent=True, reply=True)
-    execute_result = await kclient.execute(
-        f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
-        store_history=False,
-        reply=True,
-    )
+    await kclient.execute(setup, silent=True, reply=True)
+    execute_result = await kclient.execute(execute, store_history=False, reply=True)
     msg_id = execute_result["parent_header"]["msg_id"]
     if execute_result["content"]["status"] != "ok":
         ret = None
@@ -101,14 +99,26 @@ async def _analyze_notebook_data(data: _NotebookAnalysisResult, nb_path: str) ->
         if result["content"]["name"] != "stdout":
             ret = None
         else:
-            try:
-                ret = DataAnalysisResult.model_validate_json(result["content"]["text"])
-            except ValidationError:
-                ret = None
-            except Exception:  # noqa: BLE001
-                ret = None
-    kclient.execute("del ____analyze_data", silent=True)
+            ret = result["content"]["text"]
+    kclient.execute(teardown, silent=True)
     await kclient.start_listening()
+    return ret
+
+
+async def _analyze_notebook_data(data: _NotebookAnalysisResult, nb_path: str) -> DataAnalysisResult | None:
+    result = await _run_in_active_kernel(
+        nb_path,
+        _DATA_ANALYSIS_FUNCTION,
+        f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
+        "del ____analyze_data",
+    )
+    if result is not None:
+        try:
+            ret = DataAnalysisResult.model_validate_json(result)
+        except ValidationError:
+            ret = None
+        except Exception:  # noqa: BLE001
+            ret = None
     return ret
 
 
@@ -124,3 +134,11 @@ async def analyze_active_notebook(model: BaseChatModel) -> DataAnalysisResult | 
         yield "Notebook analysis failed, falling back to defaults...\n\n"
     yield res
     return
+
+
+async def analyze_mofaflex_api() -> str | None:
+    nb_path = await notebook.get_active_notebook()
+    result = await _run_in_active_kernel(
+        nb_path, _MOFAFLEX_API_ANALYSIS_FUNCTION, "print(____analyze_mofaflex_api())", "del ____analyze_mofaflex_api"
+    )
+    return json.loads(result) if result is not None else None

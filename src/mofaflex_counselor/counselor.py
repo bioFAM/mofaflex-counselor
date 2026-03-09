@@ -21,7 +21,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from pydantic import Field, create_model
 
-from .notebook import DataAnalysisResult, analyze_active_notebook
+from .notebook import DataAnalysisResult, analyze_active_notebook, analyze_mofaflex_api
 from .parametersmodel import make_mofaflex_parameters_model
 from .utils import DEBUG
 
@@ -74,35 +74,53 @@ class MofaFlexCounselor(BasePersona):
         configurable = {"configurable": {"thread_id": self.ychat.get_id(), "username": message.sender}}
 
         async def create_aiter():
+            store = await self.get_memory_store()
             try:
-                store = await self.get_memory_store()
                 checkpoint = await anext(store.alist(configurable, limit=1))
                 analyzed = configurable["data_analysis_result"] = checkpoint.metadata.get("data_analysis_result")
                 data_prompt = configurable["data_prompt"] = checkpoint.metadata.get("data_prompt")
                 if analyzed is not None:
                     analyzed = DataAnalysisResult.model_validate_json(analyzed)
+
+                mofaflex_api = configurable["mofaflex_api"] = checkpoint.metadata.get("mofaflex_api")
             except StopAsyncIteration:  # new thread
                 async for analyzed in analyze_active_notebook(self._model):
                     if isinstance(analyzed, str):
                         yield analyzed
+
+                mofaflex_api = await analyze_mofaflex_api()
+                if mofaflex_api is not None:
+                    api = ""
+                    for func, funcapi in mofaflex_api.items():
+                        api += f"mfl.{func}{funcapi['signature']}\n{funcapi['doc']}\n\n"
+                    mofaflex_api = api
             if DEBUG:
                 yield f"`{analyzed}`"
             parameters_model = make_mofaflex_parameters_model(analyzed)
             finalize_configuration_schema = create_model("FinalizeConfigurationSchema", parameters=parameters_model)
 
             system_prompt = SYSTEM_PROMPT
-            data_prompt = None
+            api = ""
             if analyzed is not None:
                 configurable["data_analysis_result"] = analyzed.model_dump_json()
                 data_prompt = configurable["data_prompt"] = DATA_PROPERTIES_PROMPT.format(
                     type=analyzed.type, n_views=analyzed.n_views, n_obs=analyzed.n_obs, n_vars=analyzed.n_vars
                 )
-                system_prompt += data_prompt
                 var_name = analyzed.var_name
                 var_type = analyzed.type
             else:
+                data_prompt = ""
                 var_name = None
                 var_type = None
+
+            if mofaflex_api is not None:
+                api = configurable["mofaflex_api"] = mofaflex_api
+            else:
+                api = configurable["mofaflex_api"] = (
+                    "No MOFA-FLEX functions available, probably because MOFA-FLEX is not correctly installed in the active notebook's environment.'"
+                )
+
+            system_prompt = system_prompt.format(data_properties=data_prompt, mofaflex_api=api)
 
             # can't use functools.partial or lambdas because langchain needs type hints
             async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
