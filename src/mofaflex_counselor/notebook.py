@@ -1,4 +1,5 @@
 import json
+import traceback
 from collections.abc import Mapping, Sequence
 from importlib import resources
 from io import StringIO
@@ -51,17 +52,22 @@ async def _get_active_notebook_code(nb_path: str) -> str | None:
     ydoc = await utils.get_jupyter_ydoc(file_id)
     active_cell_id = notebook._get_active_cell_id_from_ydoc(ydoc)
     code = StringIO()
-    for cellidx in range(ydoc.cell_number):
-        cell = ydoc.get_cell(cellidx)
-        if cell.get("cell_type") == "code":
-            source = cell["source"]
-            code.write(source)
-            if len(source) > 0 and source[-1] != "\n":
-                code.write("\n")
-        if cell["id"] == active_cell_id:
-            break
+    try:
+        for cellidx in range(ydoc.cell_number):
+            cell = ydoc.get_cell(cellidx)
+            if cell.get("cell_type") == "code":
+                source = cell["source"]
+                code.write(source)
+                if len(source) > 0 and source[-1] != "\n":
+                    code.write("\n")
+            if cell["id"] == active_cell_id:
+                break
 
-    return code.getvalue()
+        return code.getvalue()
+    except Exception as e:  # noqa: BLE001
+        if DEBUG:
+            traceback.print_exception(e)
+        return None
 
 
 async def _get_active_notebook_kernel_client(nb_path: str) -> AsyncKernelClient:
