@@ -69,7 +69,7 @@ _parameters_conditional = {
         str | None,
         Field(
             default=None,
-            description="Key of the .varm attribute of the data object that contains gene set annotations for the Horseshoe prior. Will be ignored if the weight prior is not Horseshoe. If the weight prior is Horseshoe and this parameter is set, the annotated gene sets will be used as prior information in the Horseshoe prior. If this parameter is set, n_factors defines the number of additional factors that do not take gene annotations into account. If ths parameter is set, n_factors should be set to 2 or 3, depending on the data: For data with less pronounced technical artifacts, n_factors=2 is recommented. For datasets with strong technical artifacts, n_factors=3 is recommended. The choice is up to the user.",
+            description="Key of the .varm attribute of the data object that contains gene set annotations for the Horseshoe prior. Will be ignored if the weight prior is not Horseshoe. If the weight prior is Horseshoe and this parameter is set, the annotated gene sets will be used as prior information in the Horseshoe prior. If this parameter is set, n_factors defines the number of additional factors that do not take gene annotations into account. If ths parameter is set, n_factors should be set to 2 or 3, depending on the data: For data with less pronounced technical artifacts, n_factors=2 is recommented. For datasets with strong technical artifacts, n_factors=3 is recommended. The choice is up to the user. This parameter should be asked about first, since its choice informs other parameters.",
         ),
     ),
 }
