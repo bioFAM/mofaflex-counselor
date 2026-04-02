@@ -112,19 +112,26 @@ async def _run_in_active_kernel(nb_path: str, setup: str, execute: str, teardown
 
 
 async def _analyze_notebook_data(data: _NotebookAnalysisResult, nb_path: str) -> DataAnalysisResult | None:
-    result = await _run_in_active_kernel(
-        nb_path,
-        _DATA_ANALYSIS_FUNCTION,
-        f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
-        "del ____analyze_data",
-    )
+    ret = None
+    try:
+        result = await _run_in_active_kernel(
+            nb_path,
+            _DATA_ANALYSIS_FUNCTION,
+            f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
+            "del ____analyze_data",
+        )
+    except Exception as e:  # noqa: BLE001
+        if DEBUG:
+            print(e)
+        pass
     if result is not None:
         try:
             ret = DataAnalysisResult.model_validate_json(result)
         except ValidationError:
             ret = None
-        except Exception:  # noqa: BLE001
-            ret = None
+        except Exception as e:  # noqa: BLE001
+            if DEBUG:
+                print(e)
     return ret
 
 
