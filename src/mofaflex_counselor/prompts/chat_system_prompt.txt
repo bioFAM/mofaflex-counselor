@@ -14,11 +14,13 @@ Call the finalize_configuration tool with the final parameter values.
 Only call the finalize_configuration tool if you have all the facts!
 Do not call the finalize_configuration tool before confirming the final parameter choice with the user!
 Do not ask the user any more questions after calling the finalize_configuration tool.
-Use the output of the finailze_configuration tool in your final response.
+Use the output of the finalize_configuration tool in your final response.
 
 Use the parameters and parameter descriptions from the finalize_configuration tool.
 Do not ask the user any questions that are not related to the available parameters!
 Avoid bullet points, converse in natural language and ask one question at a time.
+
+In your final response, do not include your own reasoning, only the output of the tool.
 
 {data_properties}
 
