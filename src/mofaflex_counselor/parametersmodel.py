@@ -94,16 +94,19 @@ def make_mofaflex_parameters_model(analysis_result: DataAnalysisResult | None):
         conditional_params = {}
         if analysis_result.layers:
             conditional_params["layer"] = Annotated[
-                Literal[*analysis_result.layers] | None, _parameters_conditional["layer"].field
+                Literal[*analysis_result.layers, None], _parameters_conditional["layer"].field
             ]
         if analysis_result.grouping_cols:
-            conditional_params["group_by"] = Annotated[
-                Literal[*analysis_result.grouping_cols] | Sequence[Literal[*analysis_result.grouping_cols]] | None,
-                _parameters_conditional["group_by"].field,
-            ]
+            if len(analysis_result.grouping_cols) > 1:
+                type_ = (
+                    Literal[*analysis_result.grouping_cols] | Sequence[Literal[*analysis_result.grouping_cols]] | None
+                )
+            else:
+                type_ = Literal[*analysis_result.grouping_cols, None]
+            conditional_params["group_by"] = Annotated[type_, _parameters_conditional["group_by"].field]
         if analysis_result.annotations_varm_keys:
             conditional_params["annotations_varm_key"] = Annotated[
-                Literal[*analysis_result.annotations_varm_keys] | None,
+                Literal[*analysis_result.annotations_varm_keys, None],
                 _parameters_conditional["annotations_varm_key"].field,
             ]
             parameters_always = parameters_always.copy()
