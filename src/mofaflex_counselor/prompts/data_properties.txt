@@ -3,3 +3,5 @@ Type: {type}
 Number of views: {n_views}
 Number of samples (cells): {n_obs}
 Number of features (genes): {n_vars}
+Layers: {layers}
+X is nonnegative: {X_nonnegative}

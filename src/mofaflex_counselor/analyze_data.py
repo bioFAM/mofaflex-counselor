@@ -64,7 +64,11 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
         ret["type"] = "MuData"
         ret["n_views"] = len(data.mod)
         ret["n_vars"] = {modname: mod.n_vars for modname, mod in data.mod.items()}
-        ret["layers"] = list(reduce(operator.and_, (mod.layers.keys() for mod in data.mod.values())))
+        ret["X_nonnegative"] = all((mod.X >= 0).all() for mod in data.mod.values())
+        ret["layers"] = [
+            {"name": layer, "nonnegative": all((mod.layers[layer] >= 0).all() for mod in data.mod.values())}
+            for layer in reduce(operator.and_, (mod.layers.keys() for mod in data.mod.values()))
+        ]
         ret["grouping_cols"] = data.obs.select_dtypes(exclude="float").columns.to_list()
 
         for mod in data.mod.values():
@@ -75,7 +79,10 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
         ret["type"] = "AnnData"
         ret["n_views"] = 1
         ret["n_vars"] = data.n_vars
-        ret["layers"] = list(data.layers.keys())
+        ret["X_nonnegative"] = (data.X >= 0).all()
+        ret["layers"] = [
+            {"name": lname, "nonnegative": bool((layer >= 0).all())} for lname, layer in data.layers.items()
+        ]
         ret["grouping_cols"] = []
 
     ret["covariates_obs_cols"] = covariates_obs_cols

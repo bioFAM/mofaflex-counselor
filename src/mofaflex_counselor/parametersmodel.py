@@ -35,14 +35,14 @@ _parameters_always = {
         bool,
         Field(
             default=False,
-            description="Constrain the factors to be nonnegative. This may improve interpretability in some cases.",
+            description="Constrain the factors to be nonnegative. This may improve interpretability in some cases. This should default to True if the selected data matrix or layer is nonnegative.",
         ),
     ],
     "nonnegative_weights": Annotated[
         bool,
         Field(
             default=False,
-            description="Constrain the weights to be nonnegative. This may improve interpretability in some cases.",
+            description="Constrain the weights to be nonnegative. This may improve interpretability in some cases. This should default to True if the selected data matrix or layer is nonnegative.",
         ),
     ],
 }

@@ -32,13 +32,19 @@ class _NotebookAnalysisResult(BaseModel):
     path: Annotated[str | None, Field(description="Path that the object was loaded from.")]
 
 
+class _LayerProperties(BaseModel):
+    name: str
+    nonnegative: bool
+
+
 class DataAnalysisResult(BaseModel):
     var_name: str
     type: Literal["MuData", "AnnData"]
     n_obs: int
     n_views: int
     n_vars: int | Mapping[str, int]
-    layers: Sequence[str]
+    X_nonnegative: bool
+    layers: Sequence[_LayerProperties]
     grouping_cols: Sequence[str]
     covariates_obs_cols: Sequence[str]
     covariates_obsm_keys: Sequence[str]

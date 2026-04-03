@@ -95,7 +95,7 @@ class MofaFlexCounselor(BasePersona):
                         api += f"mfl.{func}{funcapi['signature']}\n{funcapi['doc']}\n\n"
                     mofaflex_api = api
             if DEBUG:
-                yield f"`{analyzed}`"
+                print(f"`{analyzed}`")
             parameters_model = make_mofaflex_parameters_model(analyzed)
             finalize_configuration_schema = create_model("FinalizeConfigurationSchema", parameters=parameters_model)
 
@@ -104,7 +104,12 @@ class MofaFlexCounselor(BasePersona):
             if analyzed is not None:
                 configurable["data_analysis_result"] = analyzed.model_dump_json()
                 data_prompt = configurable["data_prompt"] = DATA_PROPERTIES_PROMPT.format(
-                    type=analyzed.type, n_views=analyzed.n_views, n_obs=analyzed.n_obs, n_vars=analyzed.n_vars
+                    type=analyzed.type,
+                    n_views=analyzed.n_views,
+                    n_obs=analyzed.n_obs,
+                    n_vars=analyzed.n_vars,
+                    layers=analyzed.layers,
+                    X_nonnegative=analyzed.X_nonnegative,
                 )
                 var_name = analyzed.var_name
                 var_type = analyzed.type
