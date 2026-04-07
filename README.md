@@ -1,17 +1,22 @@
 # mofaflex-counselor
 
+<!--
 [![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
 
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/biofam/mofaflex-counselor/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/mofaflex-counselor
+-->
 
 JupyterAI persona to help you configure MOFA-FLEX
 
 ## Getting started
 
-Please refer to the [documentation][],
-in particular, the [API documentation][].
+Refer to the [JupyterAI documentation](https://jupyter-ai.readthedocs.io/en/v3/) for general usage instructions.
+In particular, the [Jupyternaut documentation](https://jupyter-ai.readthedocs.io/en/v3/users/jupyternaut/index.html) describes how to select an LLM model and set an API key.
+After that is done, you can request assistance with your MOFA-FLEX analysis by chatting with the `MOFA-FLEX-counselor` persona.
+
+https://raw.githubusercontent.com/bioFAM/mofaflex-counselor/main/docs/_static/img/Screencast_20260403_180223.webm
 
 ## Installation
 
@@ -40,7 +45,6 @@ See the [changelog][].
 
 ## Contact
 
-For questions and help requests, you can reach out in the [scverse discourse][].
 If you found a bug, please use the [issue tracker][].
 
 ## Citation
@@ -48,10 +52,7 @@ If you found a bug, please use the [issue tracker][].
 > t.b.a
 
 [uv]: https://github.com/astral-sh/uv
-[scverse discourse]: https://discourse.scverse.org/
 [issue tracker]: https://github.com/biofam/mofaflex-counselor/issues
 [tests]: https://github.com/biofam/mofaflex-counselor/actions/workflows/test.yaml
-[documentation]: https://mofaflex-counselor.readthedocs.io
-[changelog]: https://mofaflex-counselor.readthedocs.io/en/latest/changelog.html
-[api documentation]: https://mofaflex-counselor.readthedocs.io/en/latest/api.html
+[changelog]: CHANGELOG.md
 [pypi]: https://pypi.org/project/mofaflex-counselor
