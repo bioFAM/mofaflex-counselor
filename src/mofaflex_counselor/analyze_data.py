@@ -1,6 +1,9 @@
-def ____analyze_data(var_name: str, data_type: str, path: str | None, return_json: bool = True):
+def ____analyze_data(
+    data_var_name: str, data_type: str, path: str | None, featuresets_var_name: str | None, return_json: bool = True
+):
     import json
     import operator
+    from contextlib import suppress
     from functools import reduce
     from pathlib import Path
 
@@ -8,10 +11,10 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
     import mudata as md
     import pandas as pd
 
-    ret = {"var_name": var_name}
+    ret = {"data_var_name": data_var_name, "featuresets_var_name": featuresets_var_name}
     data = None
     try:
-        data = globals()[var_name]
+        data = globals()[data_var_name]
     except KeyError:
         if path is not None:  # TODO: use anndata.experimental.read_lazy for sufficiently recent anndata versions
             path = Path(path)
@@ -21,16 +24,10 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
                 data = md.read_zarr(path)
 
     if not isinstance(data, ad.AnnData | md.MuData):
-        candidates_anndata, candidates_mudata = {}, {}
-        for var_name, var in globals().items():
-            if isinstance(var, ad.AnnData):
-                candidates_anndata[var_name] = var
-            elif isinstance(var, md.MuData):
-                candidates_mudata[var_name] = var
-        if len(candidates_mudata):
-            ret["var_name"], data = next(reversed(candidates_mudata.items()))
-        elif len(candidates_anndata):
-            ret["var_name"], data = next(reversed(candidates_anndata.items()))
+        for var_name, data in reversed(globals().items()):
+            if isinstance(data, ad.AnnData | md.MuData):
+                ret["data_var_name"] = var_name
+                break
         else:
             raise RuntimeError("No AnnData or MuData object found.")
 
@@ -47,7 +44,11 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
             and (isinstance(v, pd.DataFrame) and v.select_dtypes("float").shape[1] == v.shape[1] or v.dtype.kind == "f")
         ]
 
-    covariates_obsm_keys = get_floating_entries(data.obsm, exclude=data.mod.keys())
+    exclude_cols = ()
+    if isinstance(data, md.MuData):
+        exclude_cols = data.mod.keys()
+
+    covariates_obsm_keys = get_floating_entries(data.obsm, exclude=exclude_cols)
 
     def get_bool_entries(kvstore, exclude=()):
         return [
@@ -57,7 +58,7 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
             and (isinstance(v, pd.DataFrame) and v.select_dtypes("bool").shape[1] == v.shape[1] or v.dtype.kind == "b")
         ]
 
-    annotations_varm_keys = get_bool_entries(data.varm, exclude=data.mod.keys())
+    annotations_varm_keys = get_bool_entries(data.varm, exclude=exclude_cols)
 
     ret["n_obs"] = data.n_obs
     if isinstance(data, md.MuData):
@@ -66,7 +67,7 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
         ret["n_vars"] = {modname: mod.n_vars for modname, mod in data.mod.items()}
         ret["X_nonnegative"] = all((mod.X >= 0).all() for mod in data.mod.values())
         ret["layers"] = [
-            {"name": layer, "nonnegative": all((mod.layers[layer] >= 0).all() for mod in data.mod.values())}
+            {"name": layer, "nonnegative": bool(all((mod.layers[layer] >= 0).all()) for mod in data.mod.values())}
             for layer in reduce(operator.and_, (mod.layers.keys() for mod in data.mod.values()))
         ]
         ret["grouping_cols"] = data.obs.select_dtypes(exclude="float").columns.to_list()
@@ -79,7 +80,7 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
         ret["type"] = "AnnData"
         ret["n_views"] = 1
         ret["n_vars"] = data.n_vars
-        ret["X_nonnegative"] = (data.X >= 0).all()
+        ret["X_nonnegative"] = bool((data.X >= 0).all())
         ret["layers"] = [
             {"name": lname, "nonnegative": bool((layer >= 0).all())} for lname, layer in data.layers.items()
         ]
@@ -88,5 +89,19 @@ def ____analyze_data(var_name: str, data_type: str, path: str | None, return_jso
     ret["covariates_obs_cols"] = covariates_obs_cols
     ret["covariates_obsm_keys"] = covariates_obsm_keys
     ret["annotations_varm_keys"] = annotations_varm_keys
+
+    featuresets = None
+    with suppress(KeyError):
+        featuresets = globals()[featuresets_var_name]
+    if featuresets.__class__.__name__ != "FeatureSets" or not featuresets.__class__.__module__.startswith("mofaflex."):
+        for var_name, featuresets in reversed(globals().items()):
+            if featuresets.__class__.__name__ == "FeatureSets" and featuresets.__class__.__module__.startswith(
+                "mofaflex."
+            ):
+                ret["featuresets_var_name"] = var_name
+                break
+
+    if featuresets is None:
+        ret["featuresets_var_name"] = None
 
     return ret if not return_json else json.dumps(ret)

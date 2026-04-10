@@ -18,18 +18,22 @@ _NOTEBOOK_ANALYSIS_SYSTEM_PROMPT = (
     resources.files(__package__) / "prompts/notebook_analyzer_system_prompt.txt"
 ).read_text()
 _DATA_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_data.py").read_text()
+_FEATURESETS_FILTER_OPTIMIZE_FUNCTION = (resources.files(__package__) / "analyze_features.py").read_text()
 _MOFAFLEX_API_ANALYSIS_FUNCTION = (resources.files(__package__) / "analyze_mofaflex_api.py").read_text()
 
 
 class _NotebookAnalysisResult(BaseModel):
-    variable_name: Annotated[
+    data_variable_name: Annotated[
         str | None,
         Field(description="The name of the variable holding the most recently modified AnnData or MuData object."),
     ]
-    type: Annotated[
+    data_type: Annotated[
         Literal["anndata", "mudata"] | None, Field(description="Whether the object is an AnnData or a MuData object.")
     ]
-    path: Annotated[str | None, Field(description="Path that the object was loaded from.")]
+    data_path: Annotated[str | None, Field(description="Path that the object was loaded from.")]
+    featuresets_variable_name: Annotated[
+        str | None, Field(description="The name of the variable holding the most recently modified FeatureSets object.")
+    ]
 
 
 class _LayerProperties(BaseModel):
@@ -38,7 +42,7 @@ class _LayerProperties(BaseModel):
 
 
 class DataAnalysisResult(BaseModel):
-    var_name: str
+    data_var_name: str
     type: Literal["MuData", "AnnData"]
     n_obs: int
     n_views: int
@@ -49,6 +53,13 @@ class DataAnalysisResult(BaseModel):
     covariates_obs_cols: Sequence[str]
     covariates_obsm_keys: Sequence[str]
     annotations_varm_keys: Sequence[str]
+    featuresets_var_name: str | None
+
+
+class FeatureSetsOptimizationResult(BaseModel):
+    min_fraction: float
+    min_count: int
+    max_count: int
 
 
 async def _get_active_notebook_code(nb_path: str) -> str | None:
@@ -90,6 +101,8 @@ async def _analyze_active_notebook_code(model: BaseChatModel, nb_path: str) -> _
     response = await model.with_structured_output(_NotebookAnalysisResult).ainvoke(
         [AIMessage(_NOTEBOOK_ANALYSIS_SYSTEM_PROMPT), HumanMessage(code)]
     )
+    if DEBUG:
+        print(response.model_dump_json())
     return response
 
 
@@ -123,13 +136,13 @@ async def _analyze_notebook_data(data: _NotebookAnalysisResult, nb_path: str) ->
         result = await _run_in_active_kernel(
             nb_path,
             _DATA_ANALYSIS_FUNCTION,
-            f"print(____analyze_data({data.variable_name!r}, {data.type!r}, {data.path!r}))",
+            f"print(____analyze_data({data.data_variable_name!r}, {data.data_type!r}, {data.data_path!r}, {data.featuresets_variable_name!r}))",
             "del ____analyze_data",
         )
     except Exception as e:  # noqa: BLE001
         if DEBUG:
             print(e)
-        pass
+        return None
     if result is not None:
         try:
             ret = DataAnalysisResult.model_validate_json(result)
@@ -161,3 +174,37 @@ async def analyze_mofaflex_api() -> str | None:
         nb_path, _MOFAFLEX_API_ANALYSIS_FUNCTION, "print(____analyze_mofaflex_api())", "del ____analyze_mofaflex_api"
     )
     return json.loads(result) if result is not None else None
+
+
+async def optimize_featuresets_filtering(
+    data: DataAnalysisResult | None,
+) -> FeatureSetsOptimizationResult | Literal[False] | None:
+    if data is None or data.featuresets_var_name is None:
+        return None
+    nb_path = await notebook.get_active_notebook()
+    if not nb_path:
+        return None
+    try:
+        result = await _run_in_active_kernel(
+            nb_path,
+            _FEATURESETS_FILTER_OPTIMIZE_FUNCTION,
+            f"print(____optimize_features_filtering({data.data_var_name!r}, {data.featuresets_var_name!r}))",
+            "del ____optimize_features_filtering",
+        )
+    except Exception as e:  # noqa: BLE001
+        if DEBUG:
+            print(e)
+        return None
+    ret = None
+    if result is not None:
+        if result != "null":
+            try:
+                ret = FeatureSetsOptimizationResult.model_validate_json(result)
+            except ValidationError:
+                ret = None
+            except Exception as e:  # noqa: BLE001
+                if DEBUG:
+                    print(e)
+        else:
+            ret = False
+    return ret

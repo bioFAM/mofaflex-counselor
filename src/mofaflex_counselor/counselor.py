@@ -21,7 +21,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from pydantic import Field, create_model
 
-from .notebook import DataAnalysisResult, analyze_active_notebook, analyze_mofaflex_api
+from .notebook import DataAnalysisResult, analyze_active_notebook, analyze_mofaflex_api, optimize_featuresets_filtering
 from .parametersmodel import make_mofaflex_parameters_model
 from .utils import DEBUG
 
@@ -111,11 +111,11 @@ class MofaFlexCounselor(BasePersona):
                     layers=analyzed.layers,
                     X_nonnegative=analyzed.X_nonnegative,
                 )
-                var_name = analyzed.var_name
+                data_var_name = analyzed.data_var_name
                 var_type = analyzed.type
             else:
                 data_prompt = ""
-                var_name = None
+                data_var_name = None
                 var_type = None
 
             if mofaflex_api is not None:
@@ -130,8 +130,11 @@ class MofaFlexCounselor(BasePersona):
             # can't use functools.partial or lambdas because langchain needs type hints
             async def finalize_configuration_tool(runtime: ToolRuntime, parameters):
                 return await self.finalize_configuration(
-                    parameters_model, data_prompt, var_name, var_type, runtime, parameters
+                    parameters_model, data_prompt, data_var_name, var_type, runtime, parameters
                 )
+
+            async def optimize_featuresets_filtering_tool(runtime: ToolRuntime):
+                return await self.optimize_featuresets_filtering(analyzed, runtime)
 
             agent = create_agent(
                 self._model,
@@ -142,7 +145,10 @@ class MofaFlexCounselor(BasePersona):
                         "finalize_configuration",
                         description=self.finalize_configuration.__doc__,
                         args_schema=finalize_configuration_schema,
-                    )(finalize_configuration_tool)
+                    )(finalize_configuration_tool),
+                    tool("optimize_featuresets_filtering", description=self.optimize_featuresets_filtering.__doc__)(
+                        optimize_featuresets_filtering_tool
+                    ),
                 ],
                 name="user_facing",
             )
@@ -363,6 +369,24 @@ model = mfl.MOFAFLEX({data},
                 ],
             }
         )
+
+    async def optimize_featuresets_filtering(self, data: DataAnalysisResult, runtime: ToolRuntime):
+        """Determine the optimal parameters for filtering a list of annotations or gene programs.
+
+        Return the output of this tool to the user as-is, without modifications.
+        """
+        params = await optimize_featuresets_filtering(data)
+        if params is None:
+            return (
+                "Someting went wrong determining the filtering parameters. In general, we recommend to "
+                "start with the defaults and adjust the options such that around 50-200 gene sets are left after filtering."
+            )
+        elif params is False:
+            return "Your feature set already has optimal size and should not be filtered."
+        else:
+            return f"""```python
+{data.featuresets_var_name} = {data.featuresets_var_name}.filter(features={data.data_var_name}.var_names, min_fraction={params.min_fraction}, min_count={params.min_count}, max_count={params.max_count})
+```"""
 
     def shutdown(self):
         if hasattr(self, "_memory_store"):
