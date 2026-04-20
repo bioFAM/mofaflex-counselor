@@ -16,7 +16,7 @@ Refer to the [JupyterAI documentation](https://jupyter-ai.readthedocs.io/en/v3/)
 In particular, the [Jupyternaut documentation](https://jupyter-ai.readthedocs.io/en/v3/users/jupyternaut/index.html) describes how to select an LLM model and set an API key.
 After that is done, you can request assistance with your MOFA-FLEX analysis by chatting with the `MOFA-FLEX-counselor` persona.
 
-https://raw.githubusercontent.com/bioFAM/mofaflex-counselor/main/docs/_static/img/Screencast_20260403_180223.webm
+[Screencast_20260403_180223.webm](https://github.com/user-attachments/assets/27ee032c-8b1d-4bc8-9af5-fd10b155752c)
 
 ## Installation
 
