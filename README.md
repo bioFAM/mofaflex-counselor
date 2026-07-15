@@ -12,7 +12,10 @@ JupyterAI persona to help you configure MOFA-FLEX
 
 ## Getting started
 
-Refer to the [JupyterAI documentation](https://jupyter-ai.readthedocs.io/en/v3/) for general usage instructions.
+Install the package and start Jupyter Lab.
+Go to `Settings -> Jupyternaut Settings` to select a large language model and (optionally) set an API key.
+Any model supported by [LiteLLM](https://litellm.ai) can be used, including local models through Ollama (we used OpenAI's GPT 5.2 for development and testing).
+For details and general usage instructions, refer to the [JupyterAI documentation](https://jupyter-ai.readthedocs.io/en/v3/).
 In particular, the [Jupyternaut documentation](https://jupyter-ai.readthedocs.io/en/v3/users/jupyternaut/index.html) describes how to select an LLM model and set an API key.
 After that is done, you can request assistance with your MOFA-FLEX analysis by chatting with the `MOFA-FLEX-counselor` persona.
 
